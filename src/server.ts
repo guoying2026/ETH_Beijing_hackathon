@@ -151,6 +151,11 @@ async function getRelevantPolymarketEvents(base: string, quote: string): Promise
   }
 }
 
+// 健康检查路由，免去频繁调用大模型
+app.get('/api/health', (_req, res) => {
+  res.json({ status: 'ok' });
+});
+
 // 主换汇分析路由
 app.get('/api/fx-intel', async (req, res) => {
   const base = (req.query.base as string || 'USD').toUpperCase();

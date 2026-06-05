@@ -165,7 +165,7 @@ export function App() {
     // 1. 探测 Node.js 后端服务
     try {
       const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3001';
-      const res = await fetch(`${apiUrl}/api/fx-intel?base=USD&quote=CNY`);
+      const res = await fetch(`${apiUrl}/api/health`);
       if (res.ok) newStatus.nodeBackend = 'ok';
     } catch (e) {
       newStatus.nodeBackend = 'error';
