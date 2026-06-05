@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Sparkles, TrendingUp, TrendingDown, Clock, AlertTriangle, Activity, DollarSign, Award, HelpCircle } from 'lucide-react';
+import { Sparkles, TrendingUp, TrendingDown, Clock, AlertTriangle, Activity, DollarSign, Award, HelpCircle, Cpu } from 'lucide-react';
 
 interface Driver {
   title: string;
@@ -44,6 +44,8 @@ interface FxData {
     };
   };
   polymarketData?: PolymarketEvent[];
+  provider?: string;
+  model?: string;
 }
 
 const T = {
@@ -113,6 +115,21 @@ const T = {
   }
 };
 
+const loadingStepsData = {
+  zh: [
+    { title: '感知阶段 (Perception)', desc: '正在连接 Polymarket 官方 API 并获取最新宏观赔率...' },
+    { title: '数据对齐 (RAG Indexing)', desc: '正在与 pgvector 数据库匹配本币汇率的历史关联事件...' },
+    { title: '认知推理 (Model Reasoning)', desc: '正在调取大语言模型 Agent 进行资产套保深度分析...' },
+    { title: '策略构建 (Strategy Output)', desc: '正在输出量化置信打分与 zkTLS 支付执行路线规划...' }
+  ],
+  en: [
+    { title: 'Perception Phase', desc: 'Connecting to Polymarket Gamma API to fetch real-time macro odds...' },
+    { title: 'RAG Alignment', desc: 'Querying pgvector database to retrieve historical correlation events...' },
+    { title: 'Model Reasoning', desc: 'Invoking Large Language Model Agent to analyze foreign exchange hedging risk...' },
+    { title: 'Strategy Synthesis', desc: 'Generating AI confidence score and planning zkTLS execution path...' }
+  ]
+};
+
 interface FxIntelPanelProps {
   onRateChange: (rate: number, pair: string) => void;
   lang: 'zh' | 'en';
@@ -134,8 +151,24 @@ export function FxIntelPanel({
 }: FxIntelPanelProps) {
   const [pair, setPair] = useState('USD/CNY');
   const [loading, setLoading] = useState(true);
+  const [loadingStep, setLoadingStep] = useState(0);
   const [data, setData] = useState<FxData | null>(null);
   const [hoveredPoint, setHoveredPoint] = useState<{ date: string; rate: number; index: number } | null>(null);
+
+  useEffect(() => {
+    if (!loading) {
+      setLoadingStep(0);
+      return;
+    }
+    const interval = setInterval(() => {
+      setLoadingStep(step => {
+        if (step < 3) return step + 1;
+        return step;
+      });
+    }, 750);
+
+    return () => clearInterval(interval);
+  }, [loading]);
 
   const fetchIntel = async (selectedPair: string) => {
     setLoading(true);
@@ -280,16 +313,53 @@ export function FxIntelPanel({
   };
 
   if (loading) {
+    const steps = loadingStepsData[lang] || loadingStepsData.zh;
     return (
-      <div className="glass-card" id="fx-intel-board" style={{ minHeight: '500px', display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div className="skeleton" style={{ width: '120px', height: '24px' }}></div>
-          <div className="skeleton" style={{ width: '100px', height: '32px' }}></div>
+      <div className="glass-card" id="fx-intel-board" style={{ minHeight: '520px', display: 'flex', flexDirection: 'column', gap: '1.5rem', padding: '2rem', justifyContent: 'center' }}>
+        <div style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', gap: '0.5rem', alignItems: 'center' }}>
+          <div className="agent-avatar-sphere" style={{ animation: 'pulsePrimary 1.5s infinite', width: '50px', height: '50px', cursor: 'default' }}>
+            <Activity size={20} color="white" />
+          </div>
+          <h3 style={{ margin: '1rem 0 0 0', fontSize: '1.15rem', fontWeight: 700 }} className="gradient-text">
+            {lang === 'zh' ? '智能外汇套保智能体分析中...' : 'FX Hedging Agent is reasoning...'}
+          </h3>
+          <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+            {lang === 'zh' ? '实时感知 Polymarket 预测概率与 RAG 汇率对齐中' : 'Sensing Polymarket odds & aligning exchange risk factors'}
+          </p>
         </div>
-        <div className="skeleton" style={{ width: '100%', height: '80px' }}></div>
-        <div className="skeleton" style={{ width: '100%', height: '180px' }}></div>
-        <div className="skeleton" style={{ width: '100%', height: '120px' }}></div>
-        <div className="skeleton" style={{ width: '100%', height: '150px' }}></div>
+        
+        <div className="agent-thought-container">
+          {steps.map((s, idx) => {
+            const isActive = loadingStep === idx;
+            const isCompleted = loadingStep > idx;
+            return (
+              <div key={idx} className={`agent-thought-step ${isActive ? 'active' : ''} ${isCompleted ? 'completed' : ''}`}>
+                <div className="agent-thought-icon" style={{ fontSize: '0.75rem', fontWeight: 'bold' }}>
+                  {isCompleted ? '✓' : (idx + 1)}
+                </div>
+                <div>
+                  <div style={{ fontWeight: 600, fontSize: '0.85rem', color: isActive ? 'var(--text-primary)' : 'var(--text-muted)' }}>
+                    {s.title}
+                  </div>
+                  <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '2px' }}>
+                    {s.desc}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Loading Progress Bar */}
+        <div style={{ width: '100%', height: '4px', background: 'rgba(255,255,255,0.05)', borderRadius: '2px', overflow: 'hidden', marginTop: '1rem' }}>
+          <div style={{
+            height: '100%',
+            width: `${(loadingStep + 1) * 25}%`,
+            background: 'linear-gradient(90deg, #6366f1, #a855f7)',
+            borderRadius: '2px',
+            transition: 'width 0.4s ease-out'
+          }} />
+        </div>
       </div>
     );
   }
@@ -310,6 +380,68 @@ export function FxIntelPanel({
           <h2 style={{ margin: 0, fontSize: '1.4rem', fontWeight: 700 }} className="gradient-text">
             {t.title}
           </h2>
+        </div>
+      </div>
+
+      {/* Agent Status Dashboard */}
+      <div className="agent-status-card">
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.85rem' }}>
+            <Cpu size={14} color="var(--primary)" />
+            <span style={{ fontWeight: 600, color: 'var(--text-muted)' }}>
+              {lang === 'zh' ? '智能体角色:' : 'Agent Role:'}
+            </span>
+            <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>
+              {lang === 'zh' ? '智能外汇套保智能体 v1.0' : 'FX Smart Hedging Agent v1.0'}
+            </span>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <span style={{ 
+              width: '6px', 
+              height: '6px', 
+              borderRadius: '50%', 
+              background: '#34d399', 
+              boxShadow: '0 0 8px #34d399',
+              animation: 'badgeBlink 2s infinite' 
+            }} />
+            <span style={{ fontSize: '0.75rem', color: '#34d399', fontWeight: 600 }}>
+              {lang === 'zh' ? '运行中' : 'Active'}
+            </span>
+          </div>
+        </div>
+
+        <div style={{ 
+          display: 'grid', 
+          gridTemplateColumns: 'repeat(2, 1fr)', 
+          gap: '8px', 
+          fontSize: '0.75rem', 
+          marginTop: '4px',
+          borderTop: '1px solid rgba(255, 255, 255, 0.05)',
+          paddingTop: '8px'
+        }}>
+          <div style={{ display: 'flex', gap: '4px', color: 'var(--text-muted)' }}>
+            <span>{lang === 'zh' ? '基座模型:' : 'Core Model:'}</span>
+            <strong style={{ color: 'var(--text-primary)' }}>
+              {data?.provider === 'hunyuan' ? 'Tencent Hunyuan' : 'Google Gemini'} 
+              <span style={{ fontSize: '0.7rem', color: 'var(--primary)', marginLeft: '4px' }}>
+                ({data?.model || 'hy3-preview'})
+              </span>
+            </strong>
+          </div>
+          <div style={{ display: 'flex', gap: '4px', color: 'var(--text-muted)' }}>
+            <span>{lang === 'zh' ? '感知传感器:' : 'Sensors:'}</span>
+            <strong style={{ color: 'var(--text-primary)' }}>Polymarket Gamma API</strong>
+          </div>
+          <div style={{ display: 'flex', gap: '4px', color: 'var(--text-muted)' }}>
+            <span>{lang === 'zh' ? '记忆体类型:' : 'Memory Type:'}</span>
+            <strong style={{ color: 'var(--text-primary)' }}>PostgreSQL RAG (pgvector)</strong>
+          </div>
+          <div style={{ display: 'flex', gap: '4px', color: 'var(--text-muted)' }}>
+            <span>{lang === 'zh' ? '决策依据:' : 'Reference:'}</span>
+            <strong style={{ color: 'var(--text-primary)' }}>
+              {data?.polymarketData?.length || 0} {lang === 'zh' ? '个相关预测盘口' : 'active predictions'}
+            </strong>
+          </div>
         </div>
       </div>
 

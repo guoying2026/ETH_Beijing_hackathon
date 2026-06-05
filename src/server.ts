@@ -424,7 +424,9 @@ app.get('/api/fx-intel', async (req, res) => {
         return searchTerms.some(term => news.title.toLowerCase().includes(term) || news.summary.toLowerCase().includes(term));
       }).slice(0, 3),
       analysis: parsedAnalysis,
-      polymarketData: ragEvents
+      polymarketData: ragEvents,
+      provider,
+      model: provider === 'hunyuan' ? (process.env.HUNYUAN_MODEL || 'hy3-preview') : 'gemini-2.5-flash'
     };
 
     res.json(finalResponse);

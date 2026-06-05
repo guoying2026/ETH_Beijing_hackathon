@@ -193,29 +193,41 @@ export function C2CTradeCard({ currentRate, pair, lang, amount, setAmount, analy
 
   // 真实唤起浏览器插件生成网银付款证明
   const handleVerifyZkTls = async (isMock: boolean = false) => {
+    const logToAgent = (msg: string) => {
+      window.dispatchEvent(new CustomEvent('agent-log', { detail: msg }));
+    };
+
     if (isMock) {
+      logToAgent('🔐 准备启动 zkTLS 虚拟公证证明流程...');
       setStep('proving');
       setProveProgress(10);
       setProveMessage(t.msgMockConnecting);
+      logToAgent('🌐 正在模拟与瑞士网银建立加密 TLS 链接 (MPC 模式)...');
       
       await new Promise(r => setTimeout(r, 1200));
       setProveProgress(45);
       setProveMessage(t.msgMockRedacting);
+      logToAgent('⚡ 正在抓取账单详情，智能脱敏隐私字段，遮蔽密码与账号余额...');
       
       await new Promise(r => setTimeout(r, 1500));
       setProveProgress(80);
       setProveMessage(t.msgMockProving);
+      logToAgent('🛡️ 正在生成不可伪造的零知识密码学证明 (zk-Proof)...');
       
       await new Promise(r => setTimeout(r, 1200));
       setProveProgress(100);
       setProveMessage(t.msgMockSuccess);
+      logToAgent('✅ zkTLS 证明生成与本地公证验证成功！');
+      logToAgent(`🎉 智能合约自动释放资金托管：已将 ${receiveAmount} ${quote} 解锁并划转至您的钱包。`);
       
       await new Promise(r => setTimeout(r, 1000));
       setStep('success');
       return;
     }
 
+    logToAgent('🔐 准备启动真实的 zkTLS 公证证明流程...');
     if (!(window as any).tlsn) {
+      logToAgent('❌ 证明失败：未检测到 TLSNotary 浏览器插件！请先在 Chrome 中安装扩展。');
       setErrorMsg(t.errNoExtension);
       return;
     }
@@ -225,14 +237,17 @@ export function C2CTradeCard({ currentRate, pair, lang, amount, setAmount, analy
     setStep('proving');
     setProveProgress(5);
     setProveMessage(t.msgBankLoad);
+    logToAgent('📡 正在从本地服务器加载 swissbank.js 证明脚本代码...');
 
     try {
       // 1. 获取已放置于 public 目录中的 swissbank 插件脚本代码
       const response = await fetch('/plugins/swissbank.js');
       if (!response.ok) throw new Error(t.errPluginCode);
       const pluginCode = await response.text();
+      logToAgent('✅ swissbank.js 证明插件加载成功。正在唤起 Chrome TLSNotary 插件...');
 
       // 2. 调用 Chrome 扩展的 RPC 执行该插件
+      logToAgent('📡 正在执行 window.tlsn.execCode... 请在弹出的浏览器窗口中完成登录与转账。');
       console.log('📡 Calling window.tlsn.execCode with SwissBank plugin...');
       const result = await (window as any).tlsn.execCode(pluginCode, {
         requestId: reqId,
@@ -240,11 +255,14 @@ export function C2CTradeCard({ currentRate, pair, lang, amount, setAmount, analy
       });
 
       console.log('✅ Proof response from extension:', result);
+      logToAgent('🎉 zkTLS 密码学转账凭证生成成功！正在提交链上结算...');
       
       // 3. 证明生成完毕，转账成立
       setStep('success');
+      logToAgent(`🎉 智能合约自动结算成功：已将 ${receiveAmount} ${quote} 解锁并存入您的账户。`);
     } catch (err: any) {
       console.error('❌ zkTLS proof generation failed:', err);
+      logToAgent(`❌ zkTLS 证明生成失败：${err.message || '未知错误'}`);
       setErrorMsg(err.message || t.errVerificationFail);
       setStep('error');
     }

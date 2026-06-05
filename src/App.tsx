@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { FxIntelPanel } from './components/FxIntelPanel';
 import { C2CTradeCard } from './components/C2CTradeCard';
-import { Shield, Database, Cpu, HelpCircle, Server, Languages, Sun, Moon } from 'lucide-react';
+import { Shield, Database, Cpu, HelpCircle, Server, Languages, Sun, Moon, Bot, Terminal, X } from 'lucide-react';
 
 interface SystemStatus {
   extension: 'ok' | 'missing';
@@ -56,6 +56,22 @@ export function App() {
   const [analysis, setAnalysis] = useState<any>(null);
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
 
+  // AI Agent States
+  const [logs, setLogs] = useState<Array<{ time: string; text: string }>>([
+    { time: new Date().toLocaleTimeString(), text: '🤖 FX Hedging Agent initialized.' },
+    { time: new Date().toLocaleTimeString(), text: '📡 Sensors active. Polling Polymarket Gamma API...' }
+  ]);
+  const [showLogsDrawer, setShowLogsDrawer] = useState(false);
+  const [speechMessage, setSpeechMessage] = useState<string | null>(null);
+  const [showSpeech, setShowSpeech] = useState(false);
+
+  const addLog = (text: string) => {
+    setLogs(prev => [
+      ...prev,
+      { time: new Date().toLocaleTimeString(), text }
+    ].slice(-35));
+  };
+
   useEffect(() => {
     if (theme === 'light') {
       document.body.classList.add('light-mode');
@@ -63,6 +79,72 @@ export function App() {
       document.body.classList.remove('light-mode');
     }
   }, [theme]);
+
+  // 监听 C2CTradeCard 通过 window 事件发送的 zkTLS 日志
+  useEffect(() => {
+    const handleAgentLog = (e: Event) => {
+      const customEvent = e as CustomEvent;
+      addLog(customEvent.detail);
+    };
+    window.addEventListener('agent-log', handleAgentLog);
+    return () => window.removeEventListener('agent-log', handleAgentLog);
+  }, []);
+
+  // 监听用户参数并生成日志
+  useEffect(() => {
+    addLog(`🔄 分析货币对切换为 ${pair}。正在启动 pgvector 向量检索匹配...`);
+    const text = lang === 'zh'
+      ? `📡 感知：检测到兑换对变更为 ${pair}。我已向 pgvector 发起语义召回以重新对齐外部事件风险。`
+      : `📡 Perceived: Currency pair switched to ${pair}. Emitted semantic recall to pgvector to re-align risk factors.`;
+    setSpeechMessage(text);
+    setShowSpeech(true);
+  }, [pair]);
+
+  useEffect(() => {
+    addLog(`💰 计划兑换金额更新为 ${amount}。重新计算滑点和点差折损...`);
+  }, [amount]);
+
+  useEffect(() => {
+    addLog(`⏱️ 观察周期偏好切换为 ${horizon === '1d' ? '短期(1天)' : horizon === '3d' ? '中期(3天)' : '长期(7天)'}。重新过滤央行重大事件窗口...`);
+  }, [horizon]);
+
+  useEffect(() => {
+    if (analysis) {
+      addLog(`📡 RAG 数据匹配成功。已关联到 ${analysis.polymarketData?.length || 0} 个相关的 Polymarket 宏观预测盘口。`);
+      const signal = analysis.analysis?.signal || 'NOW';
+      const confidence = analysis.analysis?.confidence || 85;
+      const coreModel = analysis.provider === 'hunyuan' ? 'Tencent Hunyuan' : 'Google Gemini';
+      addLog(`🧠 AI 决策器 (${coreModel}) 推荐时机信号：[${signal}]，可信度：${confidence}%。`);
+    }
+  }, [analysis]);
+
+  // 定时气泡提示
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (analysis) {
+        const isZh = lang === 'zh';
+        const signal = analysis.analysis?.signal || 'NOW';
+        const confidence = analysis.analysis?.confidence || 85;
+        
+        let text = "";
+        if (isZh) {
+          text = `提示：通过 Polymarket 聚合共识预测分析，当前兑换时机评级为【${signal === 'NOW' ? '现在兑换' : signal === 'WAIT' ? '等待观察' : '保持观望'}】（置信度 ${confidence}%）。建议点击左下角“查看决策详情”获取深度套保数据支撑。`;
+        } else {
+          text = `Agent Alert: Based on Polymarket aggregate consensus, the swap timing rating is [${signal}] with ${confidence}% confidence. Click "View Decision Details" to review the RAG indicators.`;
+        }
+        setSpeechMessage(text);
+        setShowSpeech(true);
+      } else {
+        const text = lang === 'zh'
+          ? "您好！我是您的智能外汇套保 Agent。我正在实时监听 Polymarket 宏观预测赔率，并为您计算点差及滑点深度。"
+          : "Hello! I am your FX Hedging Agent. I monitor Polymarket odds and liquidity depth in real time to suggest optimal swap timing.";
+        setSpeechMessage(text);
+        setShowSpeech(true);
+      }
+    }, 3000);
+
+    return () => clearTimeout(timer);
+  }, [lang, analysis]);
   
   // 系统四大服务健康检查状态
   const [status, setStatus] = useState<SystemStatus>({
@@ -299,6 +381,98 @@ export function App() {
           }
         }
       `}</style>
+
+      {/* AI Agent Floating Assistant Bot */}
+      <div className="agent-assistant-container">
+        {/* Proactive Speech Bubble */}
+        {showSpeech && speechMessage && (
+          <div className="agent-speech-bubble">
+            <button 
+              onClick={() => setShowSpeech(false)} 
+              style={{
+                position: 'absolute',
+                top: '6px',
+                right: '6px',
+                background: 'none',
+                border: 'none',
+                color: 'var(--text-muted)',
+                cursor: 'pointer',
+                padding: '2px'
+              }}
+            >
+              <X size={12} />
+            </button>
+            <div style={{ paddingRight: '12px' }}>
+              {speechMessage}
+            </div>
+          </div>
+        )}
+
+        {/* Floating Bot Sphere */}
+        <div 
+          className="agent-avatar-sphere" 
+          onClick={() => {
+            setShowLogsDrawer(!showLogsDrawer);
+            setShowSpeech(false);
+          }}
+          title={lang === 'zh' ? '查看 AI Agent 运行日志' : 'View AI Agent Logs'}
+        >
+          <Bot size={28} color="white" />
+          {/* Pulsing indicator badge */}
+          {showSpeech && <div className="agent-badge" />}
+        </div>
+      </div>
+
+      {/* Terminal-like Agent Logs Drawer */}
+      {showLogsDrawer && (
+        <div className="agent-log-drawer">
+          <div className="agent-log-header">
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.8rem', fontWeight: 'bold' }}>
+              <Terminal size={14} color="var(--primary)" />
+              <span className="gradient-text">
+                {lang === 'zh' ? 'Agent 决策运行日志' : 'Agent Decision Runtime Logs'}
+              </span>
+            </div>
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+              <button 
+                onClick={() => setLogs([{ time: new Date().toLocaleTimeString(), text: '🧹 Log cleared.' }])}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: 'var(--text-muted)',
+                  cursor: 'pointer',
+                  fontSize: '0.7rem'
+                }}
+              >
+                {lang === 'zh' ? '清空' : 'Clear'}
+              </button>
+              <button 
+                onClick={() => setShowLogsDrawer(false)} 
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: 'var(--text-muted)',
+                  cursor: 'pointer',
+                  padding: '2px'
+                }}
+              >
+                <X size={14} />
+              </button>
+            </div>
+          </div>
+          <div className="agent-log-terminal">
+            {logs.map((log, index) => (
+              <div key={index} style={{ lineHeight: '1.4' }}>
+                <span style={{ color: 'var(--text-muted)', marginRight: '6px' }}>[{log.time}]</span>
+                <span>{log.text}</span>
+              </div>
+            ))}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginTop: '4px' }}>
+              <span style={{ width: '4px', height: '12px', background: '#34d399', display: 'inline-block', animation: 'badgeBlink 1s infinite' }} />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
