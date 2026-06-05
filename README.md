@@ -11,7 +11,7 @@ FX Intel C2C 是一款面向 Web3 和 AI 比赛设计的新一代智能外汇 P2
 * **🧠 多模型 AI 决策系统 (Multi-LLM Decision Engine)**
   内置双语决策提示词架构，原生支持 **腾讯混元大模型 (Tencent Hunyuan `hy3-preview`)** 和 **Google Gemini** 快速热切换，自动生成汇率波动置信度评分与精细的交易策略。
 * **🛡️ 可信数据证明 (zkTLS Data Verification)**
-  支持本地启动虚拟可信数据证明（Mock 演示模式，免安装插件一键体验），同时可无缝联动本地真实的 `tlsn-extension` 与 `tlsn-verifier-server`，验证数据源的真实性与隐私性，确保 C2C 交易的凭证防篡改。
+  链接本地启动虚拟可信数据证明（Mock 演示模式）尚未开发完成
 * **📂 向量检索增强 (RAG & Vector Search)**
   利用 PostgreSQL + `pgvector` 存储预测事件，基于 RAG 技术在用户进行外汇换汇时自动检索并展现与其交易币种最相关的宏观市场因子及胜率趋势。
 * **💎 奢华毛玻璃视觉交互 (Premium Glassmorphism UI)**
@@ -95,13 +95,6 @@ npm run dev
 ```
 
 打开浏览器访问 `http://localhost:5173/` 即可体验平台。
-
-### 4. 体验可信数据证明 (zkTLS Proof Experience)
-* **🔮 Mock 演示模式 (免插件一键体验)**：在极速换汇卡片的 **“第二步：生成付款的密码学证明 (zkTLS)”** 中，直接点击底部的 **“Mock 演示”** 按钮。系统会全自动模拟与瑞士网银建立加密 TLS 连接、脱敏隐私字段、并生成/验证 zkTLS 证明的流畅动画，非常适合路演和功能演示。
-* **🛠️ 真实插件联动 (Full Protocol Integration)**：
-  1. 确保已在本地运行 `tlsn-verifier-server` (在 `tlsn-extension/servers` 下运行 `cargo run -p tlsn-verifier-server`)。
-  2. 在 Chrome 中加载并配置好 `tlsn-extension` 浏览器插件。
-  3. 在极速换汇卡片中点击 **“Verify with zkTLS”**，即可唤起真实浏览器插件连接瑞士网银生成真实的零知识证明凭证。
 
 ---
 
