@@ -111,6 +111,17 @@ export function App() {
   useEffect(() => {
     if (analysis) {
       addLog(`📡 RAG 数据匹配成功。已关联到 ${analysis.polymarketData?.length || 0} 个相关的 Polymarket 宏观预测盘口。`);
+      
+      // 打印长期记忆检索状态
+      if (analysis.longTermMemories && analysis.longTermMemories.length > 0) {
+        addLog(`🧠 [Long-term Memory] 从 Hy-Memory (127.0.0.1:19527) 检索到 ${analysis.longTermMemories.length} 条关于您历史行为的长期记忆。`);
+        analysis.longTermMemories.forEach((m: any, idx: number) => {
+          addLog(`   ↪ 💾 历史记忆 [${idx + 1}]: "${m.content || m.text || JSON.stringify(m)}"`);
+        });
+      } else {
+        addLog(`🧠 [Long-term Memory] 从 Hy-Memory 检索完成。当前用户对该币种暂无长期记忆沉淀。`);
+      }
+
       const signal = analysis.analysis?.signal || 'NOW';
       const confidence = analysis.analysis?.confidence || 85;
       const coreModel = analysis.provider === 'hunyuan' ? 'Tencent Hunyuan' : 'Google Gemini';

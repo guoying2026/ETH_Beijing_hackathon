@@ -15,7 +15,7 @@ export async function initDatabase() {
   const client = await pool.connect();
   try {
     console.log('🔄 Checking database connection and initializing schema...');
-    
+
     // 1. 尝试开启 pgvector 扩展
     await client.query('CREATE EXTENSION IF NOT EXISTS vector;');
     console.log('✅ pgvector extension is enabled.');

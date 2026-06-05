@@ -50,7 +50,7 @@ interface FxData {
 
 const T = {
   zh: {
-    title: 'FX Intel 智能决策看板',
+    title: 'FX Intel 外汇决策智能体看板',
     usdCny: 'USD/CNY (美元/人民币)',
     usdMyr: 'USD/MYR (美元/马币)',
     cnyMyr: 'CNY/MYR (人民币/马币)',
@@ -61,7 +61,7 @@ const T = {
     change30d: '最近 30 天涨跌',
     trendTitle: '30 天历史汇率走势',
     hoverTip: '* 悬停数据点显示具体价格',
-    geminiTitle: 'Gemini AI 智能换汇建议',
+    geminiTitle: 'Tencent Hunyuan AI Agent 智能套保决策',
     driversTitle: '核心影响驱动因素 (DRIVERS)',
     riskTitle: '最大不确定性风险',
     windowTitle: '建议观察期窗口',
@@ -82,7 +82,7 @@ const T = {
     executionSuggestion: '推荐执行方案',
   },
   en: {
-    title: 'FX Intel Timing Decision Board',
+    title: 'FX Intel AI Agent Decision Board',
     usdCny: 'USD/CNY (USD/CNY)',
     usdMyr: 'USD/MYR (USD/MYR)',
     cnyMyr: 'CNY/MYR (CNY/MYR)',
@@ -93,7 +93,7 @@ const T = {
     change30d: '30-Day Change',
     trendTitle: '30-Day Historical Trend',
     hoverTip: '* Hover over data points for details',
-    geminiTitle: 'Gemini AI Timing Recommendation',
+    geminiTitle: 'Tencent Hunyuan AI Agent Timing Decision',
     driversTitle: 'Key Impact Drivers',
     riskTitle: 'Max Uncertainty Risks',
     windowTitle: 'Recommended Window',
@@ -154,6 +154,9 @@ export function FxIntelPanel({
   const [loadingStep, setLoadingStep] = useState(0);
   const [data, setData] = useState<FxData | null>(null);
   const [hoveredPoint, setHoveredPoint] = useState<{ date: string; rate: number; index: number } | null>(null);
+  const [autoInterval, setAutoInterval] = useState<number>(300); // 默认 5 分钟 (300秒)
+  const [countdown, setCountdown] = useState<number>(300);
+  const [isTimerActive, setIsTimerActive] = useState<boolean>(true);
 
   useEffect(() => {
     if (!loading) {
@@ -188,9 +191,40 @@ export function FxIntelPanel({
     }
   };
 
+  // 1. 仅在货币对改变时自动触发，并重置倒计时（表单金额/观察期变化不再自动触发）
   useEffect(() => {
     fetchIntel(pair);
-  }, [pair, lang, amount, horizon]);
+    if (autoInterval > 0) {
+      setCountdown(autoInterval);
+    }
+  }, [pair]);
+
+  // 2. 自动巡检定时器逻辑
+  useEffect(() => {
+    if (autoInterval <= 0 || !isTimerActive || loading) {
+      return;
+    }
+
+    const timer = setInterval(() => {
+      setCountdown(prev => {
+        if (prev <= 1) {
+          fetchIntel(pair);
+          return autoInterval;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [autoInterval, isTimerActive, loading, pair, amount, horizon, lang]);
+
+  // 手动触发运行 AI 智能体
+  const handleManualRun = () => {
+    fetchIntel(pair);
+    if (autoInterval > 0) {
+      setCountdown(autoInterval);
+    }
+  };
 
   // 渲染 SVG 折线图的辅助计算
   const renderChart = (history: FxData['history']) => {
@@ -380,6 +414,97 @@ export function FxIntelPanel({
           <h2 style={{ margin: 0, fontSize: '1.4rem', fontWeight: 700 }} className="gradient-text">
             {t.title}
           </h2>
+        </div>
+
+        {/* 自动/手动轮询 AI 智能体控制台 */}
+        <div style={{ 
+          display: 'flex', 
+          alignItems: 'center', 
+          gap: '0.75rem', 
+          background: 'rgba(255,255,255,0.03)', 
+          padding: '6px 12px', 
+          borderRadius: '8px', 
+          border: '1px solid rgba(255,255,255,0.06)', 
+          fontSize: '0.8rem',
+          backdropFilter: 'blur(8px)',
+          boxShadow: '0 4px 12px rgba(0, 0, 0, 0.1)'
+        }}>
+          <span style={{ color: 'var(--text-muted)', fontWeight: 500 }}>
+            {lang === 'zh' ? 'AI 智能体巡检(秒):' : 'AI Agent Check (s):'}
+          </span>
+          <input 
+            type="number"
+            min="0"
+            value={autoInterval === 0 ? '' : autoInterval}
+            onChange={(e) => {
+              const val = e.target.value === '' ? 0 : Math.max(0, parseInt(e.target.value, 10));
+              setAutoInterval(val);
+              setCountdown(val);
+            }}
+            placeholder={lang === 'zh' ? '手动' : 'Manual'}
+            style={{ 
+              background: 'rgba(255, 255, 255, 0.05)', 
+              color: 'white', 
+              border: '1px solid rgba(255, 255, 255, 0.1)', 
+              borderRadius: '6px', 
+              padding: '3px 8px', 
+              fontSize: '0.75rem', 
+              width: '60px',
+              textAlign: 'center',
+              outline: 'none'
+            }}
+          />
+
+          {autoInterval > 0 && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <span style={{ 
+                fontFamily: 'monospace', 
+                color: isTimerActive ? 'var(--primary)' : 'var(--text-muted)', 
+                fontWeight: 'bold',
+                minWidth: '32px',
+                textAlign: 'center'
+              }}>
+                {isTimerActive ? `${countdown}s` : (lang === 'zh' ? '暂停' : 'Paused')}
+              </span>
+              <button 
+                onClick={() => setIsTimerActive(!isTimerActive)}
+                style={{ 
+                  background: 'transparent', 
+                  border: 'none', 
+                  color: isTimerActive ? 'var(--text-primary)' : 'var(--primary)', 
+                  cursor: 'pointer', 
+                  padding: '2px 4px', 
+                  display: 'flex', 
+                  alignItems: 'center',
+                  fontSize: '0.8rem',
+                  transition: 'color 0.2s'
+                }}
+                title={isTimerActive ? (lang === 'zh' ? '暂停倒计时' : 'Pause') : (lang === 'zh' ? '开启倒计时' : 'Resume')}
+              >
+                {isTimerActive ? '⏸' : '▶'}
+              </button>
+            </div>
+          )}
+
+          <button 
+            onClick={() => handleManualRun()} 
+            style={{ 
+              background: 'linear-gradient(90deg, #6366f1, #a855f7)', 
+              border: 'none',
+              color: 'white',
+              padding: '6px 12px', 
+              fontSize: '0.75rem', 
+              fontWeight: 600,
+              borderRadius: '6px', 
+              cursor: 'pointer',
+              boxShadow: '0 2px 8px rgba(99, 102, 241, 0.3)',
+              transition: 'transform 0.1s, opacity 0.2s',
+            }}
+            onMouseDown={(e) => e.currentTarget.style.transform = 'scale(0.95)'}
+            onMouseUp={(e) => e.currentTarget.style.transform = 'scale(1)'}
+          >
+            {lang === 'zh' ? '运行 AI 智能体' : 'Run AI Agent'}
+          </button>
         </div>
       </div>
 
@@ -808,7 +933,14 @@ export function FxIntelPanel({
               <HelpCircle size={12} color="var(--text-muted)" />
             </span>
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+          <div style={{ 
+            display: 'flex', 
+            flexDirection: 'column', 
+            gap: '0.5rem',
+            maxHeight: '260px',
+            overflowY: 'auto',
+            paddingRight: '4px'
+          }}>
             {data.polymarketData.map((event) => (
               <a
                 href={event.url}

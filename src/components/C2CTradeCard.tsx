@@ -197,6 +197,22 @@ export function C2CTradeCard({ currentRate, pair, lang, amount, setAmount, analy
       window.dispatchEvent(new CustomEvent('agent-log', { detail: msg }));
     };
 
+    const saveTransactionMemory = async () => {
+      try {
+        await fetch('/api/save-memory', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            content: `用户 guoying_dev 在即期汇率 1 ${base} = ${currentRate.toFixed(4)} ${quote} 时，成功通过 zkTLS 零知识证明锁定并结算了金额为 ${payAmount} ${base} 的 C2C 汇率合约交易。`,
+            userId: 'guoying_dev'
+          })
+        });
+        logToAgent('🧠 [Long-term Memory] 已将此次 zkTLS 交易记录主动沉淀至腾讯混元 Hy-Memory 长期记忆中。');
+      } catch (e) {
+        console.warn('Failed to save long term memory:', e);
+      }
+    };
+
     if (isMock) {
       logToAgent('🔐 准备启动 zkTLS 虚拟公证证明流程...');
       setStep('proving');
@@ -219,6 +235,7 @@ export function C2CTradeCard({ currentRate, pair, lang, amount, setAmount, analy
       setProveMessage(t.msgMockSuccess);
       logToAgent('✅ zkTLS 证明生成与本地公证验证成功！');
       logToAgent(`🎉 智能合约自动释放资金托管：已将 ${receiveAmount} ${quote} 解锁并划转至您的钱包。`);
+      await saveTransactionMemory();
       
       await new Promise(r => setTimeout(r, 1000));
       setStep('success');
@@ -256,6 +273,7 @@ export function C2CTradeCard({ currentRate, pair, lang, amount, setAmount, analy
 
       console.log('✅ Proof response from extension:', result);
       logToAgent('🎉 zkTLS 密码学转账凭证生成成功！正在提交链上结算...');
+      await saveTransactionMemory();
       
       // 3. 证明生成完毕，转账成立
       setStep('success');

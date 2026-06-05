@@ -35,6 +35,52 @@ app.use(express.json());
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
 
+// 统一的向量生成工具，带有 mock 兜底
+async function getEmbedding(text: string): Promise<number[]> {
+  try {
+    const model = genAI.getGenerativeModel({ model: 'text-embedding-004' });
+    const result = await model.embedContent(text);
+    if (result.embedding && result.embedding.values) {
+      return result.embedding.values;
+    }
+    throw new Error('Invalid embedding response structure');
+  } catch (error) {
+    console.warn(`⚠️ Failed to fetch embedding for "${text}" from Gemini API (Error: ${error instanceof Error ? error.message : String(error)}). Using local hash-based vector fallback.`);
+    const mockVector: number[] = [];
+    let hash = 0;
+    for (let i = 0; i < text.length; i++) {
+      hash = text.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    for (let i = 0; i < 768; i++) {
+      const seed = Math.sin(hash + i) * 10000;
+      mockVector.push(Number((seed - Math.floor(seed) - 0.5).toFixed(6)));
+    }
+    return mockVector;
+  }
+}
+
+// 主动从本地的 Hy-Memory 服务检索长期记忆
+async function getHyMemories(userId: string, query: string): Promise<any[]> {
+  try {
+    const response = await fetch('http://127.0.0.1:19527/api/v1/search', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        query,
+        user_ids: [userId]
+      })
+    });
+    if (response.ok) {
+      const data = await response.json() as any;
+      return data.results || data || [];
+    }
+  } catch (error) {
+    console.warn('⚠️ Failed to query Hy-Memory server:', error instanceof Error ? error.message : String(error));
+  }
+  return [];
+}
+
+
 // 本地静态新闻库，作为备用以及渲染卡片的基础
 const RECENT_NEWS = [
   {
@@ -99,42 +145,19 @@ function generateHistory(rate: number) {
 // 召回与当前货币对最相关的 Polymarket 事件 (本地 RAG)
 async function getRelevantPolymarketEvents(base: string, quote: string): Promise<any[]> {
   const queryText = `Analyze exchange rate trends and macro factors for ${base} to ${quote} exchange.`;
-  
-  try {
-    // 1. 尝试生成查询的 Embedding 向量
-    let queryVector: number[] = [];
-    try {
-      const model = genAI.getGenerativeModel({ model: 'text-embedding-004' });
-      const embedRes = await model.embedContent(queryText);
-      if (embedRes.embedding && embedRes.embedding.values) {
-        queryVector = embedRes.embedding.values;
-      } else {
-        throw new Error('Invalid embedding response');
-      }
-    } catch (err) {
-      console.warn(`⚠️ RAG: Failed to generate query embedding from API. Using local hash-based mock query vector.`);
-      // 使用哈希生成对应的确定性 mock 查询向量
-      let hash = 0;
-      for (let i = 0; i < queryText.length; i++) {
-        hash = queryText.charCodeAt(i) + ((hash << 5) - hash);
-      }
-      for (let i = 0; i < 768; i++) {
-        const seed = Math.sin(hash + i) * 10000;
-        queryVector.push(Number((seed - Math.floor(seed) - 0.5).toFixed(6)));
-      }
-    }
 
+  try {
+    const queryVector = await getEmbedding(queryText);
     const vectorStr = `[${queryVector.join(',')}]`;
 
-    // 2. 在 PostgreSQL 中利用 pgvector 进行余弦检索
-    // <=> 操作符计算余弦距离（越小越相似），召回最相关的 3 个事件
+    // <=> 操作符计算余弦距离（越小越相似），召回最相关的 20 个事件
     const res = await pool.query(
       `SELECT id, title, odds, url, (embedding <=> $1) AS distance 
        FROM polymarket_events 
-       ORDER BY distance ASC LIMIT 3`,
+       ORDER BY updated_at DESC, distance ASC LIMIT 20`,
       [vectorStr]
     );
-    
+
     if (res.rows && res.rows.length > 0) {
       console.log(`📡 RAG: Successfully retrieved ${res.rows.length} events from PostgreSQL vector database.`);
       return res.rows.map(r => ({
@@ -156,18 +179,52 @@ app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok' });
 });
 
+// OpenAI 兼容的 Embedding 本地代理接口，供 Hy-Memory 插件做向量转换使用
+app.post('/v1/embeddings', async (req, res) => {
+  const { input, model } = req.body;
+  if (!input) {
+    return res.status(400).json({ error: 'Missing "input" field in request body' });
+  }
+
+  try {
+    const textToEmbed = Array.isArray(input) ? input.join('\n') : String(input);
+    console.log(`🧠 Local Embedding Proxy: Generating vector for text: "${textToEmbed.slice(0, 50)}..."`);
+    
+    const vector = await getEmbedding(textToEmbed);
+    
+    res.json({
+      object: 'list',
+      data: [
+        {
+          object: 'embedding',
+          index: 0,
+          embedding: vector
+        }
+      ],
+      model: model || 'text-embedding-004',
+      usage: {
+        prompt_tokens: 0,
+        total_tokens: 0
+      }
+    });
+  } catch (error) {
+    console.error('❌ Local Embedding Proxy failed:', error);
+    res.status(500).json({ error: 'Embedding generation failed' });
+  }
+});
+
 // 主换汇分析路由
 app.get('/api/fx-intel', async (req, res) => {
   const base = (req.query.base as string || 'USD').toUpperCase();
   const quote = (req.query.quote as string || 'CNY').toUpperCase();
   const lang = (req.query.lang as string || 'zh').toLowerCase();
-  
+
   // 获取用户交换金额和观察期限
   const amount = Number(req.query.amount as string || '1000');
   const horizon = (req.query.horizon as string || '3d').toLowerCase();
-  
+
   console.log(`📥 GET /api/fx-intel request received. Pair: ${base}/${quote}, Amount: ${amount}, Horizon: ${horizon}, Lang: ${lang}`);
-  
+
   let currentRate = 1;
   let effectiveRate = 1;
   let totalCostFactor = 0.003;
@@ -175,6 +232,7 @@ app.get('/api/fx-intel', async (req, res) => {
   let change7d = 0;
   let change30d = 0;
   let ragEvents: any[] = [];
+  let memories: any[] = [];
 
   try {
     // 1. 获取汇率
@@ -187,7 +245,7 @@ app.get('/api/fx-intel', async (req, res) => {
       const usdToQuote = rates[quote] || 1;
       currentRate = baseToUSD * usdToQuote;
     }
-    
+
     // 计算平台可执行的到手汇率 (Effective Rate)
     // 基础点差：0.3%
     const baseSpread = 0.003;
@@ -195,10 +253,10 @@ app.get('/api/fx-intel', async (req, res) => {
     const slippage = (amount / 10000) * 0.0005;
     totalCostFactor = baseSpread + slippage;
     effectiveRate = currentRate * (1 - totalCostFactor);
-    
+
     // 2. 生成历史走势
     history = generateHistory(currentRate);
-    
+
     // 3. 计算 7d 和 30d 的变化率以及波动率特征
     const startRate30d = history[0]?.rate || currentRate;
     const startRate7d = history[history.length - 8]?.rate || currentRate;
@@ -212,19 +270,26 @@ app.get('/api/fx-intel', async (req, res) => {
     const variance = history.reduce((sum, h) => sum + Math.pow(h.rate - avg30d, 2), 0) / history.length;
     const stdDev = Math.sqrt(variance);
     const realizedVol30d = Number(((stdDev / avg30d) * 100).toFixed(2));
-    
+
     const ratesList = history.map(h => h.rate);
     const max30d = Math.max(...ratesList);
     const min30d = Math.min(...ratesList);
     const range30d = max30d - min30d || 0.0001;
     const percentile30d = Math.round(((currentRate - min30d) / range30d) * 100);
-    
+
     // 4. 通过 pgvector RAG 检索 Polymarket 相关事件概率
     ragEvents = await getRelevantPolymarketEvents(base, quote);
 
+    // 4.5. 通过 Hy-Memory 检索用户长期记忆偏好
+    const userId = 'guoying_dev';
+    const memoryQuery = `User preference, transaction history, habits or locked zkTLS contracts for ${base}/${quote}.`;
+    console.log(`🧠 [Long-term Memory] Querying Hy-Memory for: "${memoryQuery.slice(0, 50)}..."`);
+    memories = await getHyMemories(userId, memoryQuery);
+    console.log(`🧠 [Long-term Memory] Retrieved ${memories.length} pieces of memory.`);
+
     // 5. 根据配置文件，组装中英文 Prompt，并分流调用大模型
     const isZh = (process.env.PROMPT_LANG || lang) === 'zh';
-    
+
     const promptEn = `
       You are an expert financial AI assistant specialized in foreign exchange (FX) market analysis.
       
@@ -239,8 +304,13 @@ app.get('/api/fx-intel', async (req, res) => {
       - 30d Realized Volatility: ${realizedVol30d}%
       - Current Rate 30-day Percentile: ${percentile30d}% (0% means historical minimum, 100% means historical maximum)
       
-      We also retrieved relevant prediction market outcomes from Polymarket (representing crowdsourced odds of macro events):
+       We also retrieved relevant prediction market outcomes from Polymarket (representing crowdsourced odds of macro events):
       ${ragEvents.map(e => `- Event: "${e.title}" | Market Odds of occurring: ${(e.odds * 100).toFixed(0)}%`).join('\n')}
+      
+      Here are the user's long-term memory snippets and preference history retrieved from tencent hy-memory:
+      ${memories && memories.length > 0
+        ? memories.map((m, idx) => `- [Memory Snippet ${idx + 1}]: "${m.content || m.text || JSON.stringify(m)}"`).join('\n')
+        : '- No historical FX behavior or preference memory found for this user.'}
       
       Recommend the best action for a user who wants to exchange ${base} into ${quote}.
       Options are:
@@ -286,6 +356,11 @@ app.get('/api/fx-intel', async (req, res) => {
       我们还从 Polymarket 预测市场检索到了相关的 crowdsourced（大众共识）宏观事件发生概率：
       ${ragEvents.map(e => `- 事件："${e.title}" | 市场发生概率：${(e.odds * 100).toFixed(0)}%`).join('\n')}
       
+      我们还检索到了该用户的长期记忆偏好（User's Long-term memories & transaction history）：
+      ${memories && memories.length > 0
+        ? memories.map((m, idx) => `- [历史偏好记忆 ${idx + 1}]："${m.content || m.text || JSON.stringify(m)}"`).join('\n')
+        : '- 暂无该用户的历史换汇倾向或偏好记忆。'}
+      
       请为想要将 ${base} 兑换为 ${quote} 的用户推荐最佳的换汇操作时机。
       可选的决策信号（signal）有：
       - "NOW" (现在兑换)：当前汇率处于相对优势区间（例如高历史百分位），且主要的宏观风险事件较少。
@@ -323,8 +398,10 @@ app.get('/api/fx-intel', async (req, res) => {
       console.log(`📡 Calling Tencent Hunyuan API (${process.env.HUNYUAN_MODEL || 'hy3-preview'})...`);
       const hunyuanKey = process.env.HUNYUAN_API_KEY;
       const hunyuanModel = process.env.HUNYUAN_MODEL || 'hy3-preview';
-      
-      const response = await fetch('https://api.hunyuan.cloud.tencent.com/v1/chat/completions', {
+
+      const hunyuanBaseUrl = process.env.HUNYUAN_BASE_URL || 'https://tokenhub.tencentmaas.com/v1';
+      const cleanBaseUrl = hunyuanBaseUrl.replace(/\/$/, '');
+      const response = await fetch(`${cleanBaseUrl}/chat/completions`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -430,6 +507,7 @@ app.get('/api/fx-intel', async (req, res) => {
       }).slice(0, 3),
       analysis: parsedAnalysis,
       polymarketData: ragEvents,
+      longTermMemories: memories,
       provider,
       model: provider === 'hunyuan' ? (process.env.HUNYUAN_MODEL || 'hy3-preview') : 'gemini-2.5-flash'
     };
@@ -437,10 +515,10 @@ app.get('/api/fx-intel', async (req, res) => {
     res.json(finalResponse);
   } catch (error) {
     console.error('❌ Failed to process fx-intel analysis:', error);
-    
+
     const isZh = lang === 'zh';
     const pair = `${base}/${quote}`;
-    
+
     // 如果第一步网络不通，这里做硬编码兜底
     if (currentRate === 1) {
       const rateMap: Record<string, number> = {
@@ -473,23 +551,23 @@ app.get('/api/fx-intel', async (req, res) => {
       analysis: {
         signal: 'WATCH',
         confidence: 80,
-        summary: isZh 
-          ? '市场目前在关键央行声明发布前处于整合阶段。' 
+        summary: isZh
+          ? '市场目前在关键央行声明发布前处于整合阶段。'
           : 'Market is in a consolidating phase ahead of key central bank statements.',
         drivers: [
-          { 
-            title: isZh ? '美联储利率前景' : 'Fed Outlook', 
-            impact: 'neutral', 
-            detail: isZh ? '市场普遍预期美联储在本次会议上将维持利率不变。' : 'Market expects Fed to maintain rates.' 
+          {
+            title: isZh ? '美联储利率前景' : 'Fed Outlook',
+            impact: 'neutral',
+            detail: isZh ? '市场普遍预期美联储在本次会议上将维持利率不变。' : 'Market expects Fed to maintain rates.'
           },
-          { 
-            title: isZh ? '本地出口强劲支撑' : 'Local Demand', 
-            impact: 'positive', 
-            detail: isZh ? '强劲的出口贸易数据持续支撑本地货币表现。' : 'Robust export numbers supporting local currencies.' 
+          {
+            title: isZh ? '本地出口强劲支撑' : 'Local Demand',
+            impact: 'positive',
+            detail: isZh ? '强劲的出口贸易数据持续支撑本地货币表现。' : 'Robust export numbers supporting local currencies.'
           }
         ],
-        riskWarning: isZh 
-          ? '受下周潜在关税法案政策出台影响，汇市短期波动率可能大幅飙升。' 
+        riskWarning: isZh
+          ? '受下周潜在关税法案政策出台影响，汇市短期波动率可能大幅飙升。'
           : 'High volatility expected due to potential tariff developments next week.',
         timeWindow: isZh ? '未来 5-7 天' : 'Next 5-7 days',
         risk_level: 'medium',
@@ -502,15 +580,47 @@ app.get('/api/fx-intel', async (req, res) => {
           liquidity_score: 90
         }
       },
-      polymarketData: finalRag
+      polymarketData: finalRag,
+      provider,
+      model: provider === 'hunyuan' ? (process.env.HUNYUAN_MODEL || 'hy3-preview') : 'gemini-2.5-flash',
+      longTermMemories: memories
     });
+  }
+});
+
+// 主动向 Hy-Memory 服务保存记忆的路由
+app.post('/api/save-memory', async (req, res) => {
+  const { content, userId } = req.body;
+  const targetUserId = userId || 'guoying_dev';
+  
+  console.log(`🧠 [Long-term Memory] Request to save memory for user "${targetUserId}": "${content.slice(0, 50)}..."`);
+  
+  try {
+    const response = await fetch('http://127.0.0.1:19527/api/v1/add', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        data: content,
+        user_id: targetUserId
+      })
+    });
+    
+    if (response.ok) {
+      const result = await response.json();
+      console.log('✅ [Long-term Memory] Saved successfully to Hy-Memory:', result);
+      return res.json({ success: true, result });
+    }
+    throw new Error(`Hy-Memory server returned ${response.status}`);
+  } catch (error) {
+    console.error('❌ [Long-term Memory] Failed to save memory:', error);
+    return res.status(500).json({ success: false, error: error instanceof Error ? error.message : String(error) });
   }
 });
 
 // 服务启动
 app.listen(PORT, async () => {
   console.log(`🚀 Node.js Backend API Server is running on http://localhost:${PORT}`);
-  
+
   // 在服务器启动时，自动在后台异步触发一次数据库同步（拉取 Polymarket 赔率并生成向量存库）
   // 这样做可以让用户一键跑通，无需手动输入同步命令
   try {
