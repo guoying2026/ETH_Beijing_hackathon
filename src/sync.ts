@@ -23,6 +23,7 @@ function shouldSkip(event: any): boolean {
   const title = event.title || '';
   const tags = event.tags || [];
 
+  // 1. 过滤掉不相关的标签
   for (const tag of tags) {
     const slug = typeof tag === 'string' ? tag : (tag.slug || '');
     if (slug !== '' && IGNORE_TAG_SLUGS.includes(slug)) {
@@ -30,10 +31,25 @@ function shouldSkip(event: any): boolean {
     }
   }
 
+  // 2. 过滤掉包含黑名单关键字的标题
   for (const kw of IGNORE_KEYWORDS) {
     if (title.includes(kw)) {
       return true;
     }
+  }
+
+  // 3. 正向匹配白名单：标题必须包含至少一个跟宏观金融、利率、关税、中美大选等强相关的核心词
+  const MACRO_KEYWORDS = [
+    'fed', 'powell', 'rate', 'tariff', 'inflation', 'recession', 
+    'china', 'cny', 'gdp', 'unemployment', 'economic', 'trade', 
+    'trump', 'harris', 'election', 'debt', 'treasury', 'bank', 
+    'eurozone', 'cpi', 'pce', 'jobs', 'currency', 'exchange'
+  ];
+
+  const lowerTitle = title.toLowerCase();
+  const hasMacro = MACRO_KEYWORDS.some(kw => lowerTitle.includes(kw));
+  if (!hasMacro) {
+    return true; // 不包含任何金融宏观核心词，跳过
   }
 
   return false;

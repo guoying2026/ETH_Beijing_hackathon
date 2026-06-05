@@ -154,7 +154,7 @@ async function getRelevantPolymarketEvents(base: string, quote: string): Promise
     const res = await pool.query(
       `SELECT id, title, odds, url, (embedding <=> $1) AS distance 
        FROM polymarket_events 
-       ORDER BY updated_at DESC, distance ASC LIMIT 20`,
+       ORDER BY distance ASC, updated_at DESC LIMIT 20`,
       [vectorStr]
     );
 
