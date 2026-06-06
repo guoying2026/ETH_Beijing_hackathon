@@ -4,7 +4,7 @@ import { C2CTradeCard } from './components/C2CTradeCard';
 import { DashboardPanel } from './components/DashboardPanel';
 import { MerchantPanel } from './components/MerchantPanel';
 import { AdminPanel } from './components/AdminPanel';
-import { Shield, HelpCircle, Languages, Sun, Moon, Bot, Terminal, X, User, Store, ShieldAlert, Wallet, Download, AlertTriangle, CheckCircle2, ChevronDown, ChevronUp } from 'lucide-react';
+import { Shield, HelpCircle, Languages, Sun, Moon, Bot, Terminal, X, User, Store, ShieldAlert, Wallet, Download, AlertTriangle, CheckCircle2, ChevronDown, ChevronUp, RefreshCw } from 'lucide-react';
 import { createPublicClient, http } from 'viem';
 import { hardhat, sepolia } from 'viem/chains';
 
@@ -87,6 +87,20 @@ export function App() {
     setTimeout(() => {
       setToastMessage(null);
     }, 2000);
+  };
+
+  const handleRecheckExtension = () => {
+    const detected = !!(window as any).tlsn;
+    setHasExtension(detected);
+    if (detected) {
+      setToastMessage(lang === 'zh' ? "✅ zkTLS 扩展检测成功，已成功加载并激活！" : "✅ zkTLS extension detected and activated successfully!");
+      setShowGuide(false);
+    } else {
+      setToastMessage(lang === 'zh' ? "❌ 未检测到 zkTLS 扩展！请确认已在管理页中“启用”该插件并刷新。" : "❌ Extension not detected! Please ensure it is enabled in settings and refresh.");
+    }
+    setTimeout(() => {
+      setToastMessage(null);
+    }, 3000);
   };
 
   const checkAndSwitchNetwork = async (ethereum: any) => {
@@ -474,6 +488,36 @@ export function App() {
                 <span>{lang === 'zh' ? '📥 下载 zkTLS 扩展包 (ZIP)' : '📥 Download extension (ZIP)'}</span>
               </a>
             )}
+
+            {!hasExtension && (
+              <button
+                onClick={handleRecheckExtension}
+                className="recheck-btn"
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  background: theme === 'light' ? '#eef2ff' : 'rgba(99, 102, 241, 0.15)',
+                  border: theme === 'light' ? '1px solid #dbeafe' : '1px solid rgba(99, 102, 241, 0.3)',
+                  padding: '6px 14px',
+                  borderRadius: '20px',
+                  color: theme === 'light' ? '#4f46e5' : 'var(--text-highlight)',
+                  cursor: 'pointer',
+                  fontSize: '0.8rem',
+                  fontWeight: 700,
+                  transition: 'all 0.2s ease',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = theme === 'light' ? '#e0e7ff' : 'rgba(99, 102, 241, 0.25)';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = theme === 'light' ? '#eef2ff' : 'rgba(99, 102, 241, 0.15)';
+                }}
+              >
+                <RefreshCw size={12} className="recheck-icon" style={{ transition: 'transform 0.3s ease' }} />
+                <span>{lang === 'zh' ? '🔄 重新检测' : '🔄 Re-detect'}</span>
+              </button>
+            )}
             
             <button
               onClick={() => setShowGuide(!showGuide)}
@@ -764,6 +808,9 @@ export function App() {
             opacity: 1;
             transform: translate(-50%, 0);
           }
+        }
+        .recheck-btn:hover .recheck-icon {
+          transform: rotate(180deg);
         }
       `}</style>
 
