@@ -78,13 +78,15 @@ export function App() {
     return () => clearInterval(interval);
   }, []);
 
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+
   const handleCopyExtensionsUrl = (e: React.MouseEvent) => {
     e.preventDefault();
     navigator.clipboard.writeText("chrome://extensions/");
-    alert(lang === 'zh' 
-      ? "📋 已自动复制地址：chrome://extensions/\n\n由于 Chrome 浏览器安全策略限制，网页无法直接跳转至本地 chrome:// 协议页面。请在浏览器中新建一个标签页，将刚才复制的地址粘贴（Cmd+V / Ctrl+V）到地址栏中，然后按回车键即可打开！" 
-      : "📋 Copied to clipboard: chrome://extensions/\n\nDue to Chrome browser security policies, web pages cannot redirect to local chrome:// protocol pages directly. Please open a new tab, paste the copied address into your address bar, and press Enter to open it."
-    );
+    setToastMessage(lang === 'zh' ? "📋 已复制扩展页地址！请粘贴到新标签页打开" : "📋 Copied! Paste into a new tab to open.");
+    setTimeout(() => {
+      setToastMessage(null);
+    }, 2000);
   };
 
   const checkAndSwitchNetwork = async (ethereum: any) => {
@@ -713,6 +715,16 @@ export function App() {
             grid-template-columns: 1fr !important;
           }
         }
+        @keyframes slideDownFadeIn {
+          from {
+            opacity: 0;
+            transform: translate(-50%, -20px);
+          }
+          to {
+            opacity: 1;
+            transform: translate(-50%, 0);
+          }
+        }
       `}</style>
 
       {/* AI Agent Floating Assistant Bot */}
@@ -804,6 +816,33 @@ export function App() {
               <span style={{ width: '4px', height: '12px', background: '#34d399', display: 'inline-block', animation: 'badgeBlink 1s infinite' }} />
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Global Minimalist Toast */}
+      {toastMessage && (
+        <div style={{
+          position: 'fixed',
+          top: '24px',
+          left: '50%',
+          transform: 'translateX(-50%)',
+          background: 'rgba(15, 12, 38, 0.95)',
+          backdropFilter: 'blur(16px)',
+          border: '1px solid rgba(16, 185, 129, 0.3)',
+          color: '#34d399',
+          padding: '12px 24px',
+          borderRadius: '30px',
+          boxShadow: '0 8px 32px 0 rgba(0, 0, 0, 0.4)',
+          fontSize: '0.85rem',
+          fontWeight: 600,
+          zIndex: 1100,
+          pointerEvents: 'none',
+          animation: 'slideDownFadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '8px',
+        }}>
+          <span>{toastMessage}</span>
         </div>
       )}
     </div>
