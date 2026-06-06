@@ -1,0 +1,39 @@
+# TLSNotary Verifier Server Configuration
+#
+# This file configures webhook endpoints that receive verification results.
+# Webhooks are triggered after successful MPC-TLS verification.
+#
+# Slim webhook payload (SlimWebhookPayload) fields:
+#   attestationId, policyVersion, serverName, travelRuleFields,
+#   accountChecksAllPassed, verifierSignature, verifierAddress,
+#   orderBindingHash, timestamp
+#
+# HMAC-SHA256 authentication (R.11):
+#   When 'secret' is set, the verifier adds the header:
+#     X-TLSN-Signature: sha256=<hex>
+#   Compute on your backend: HMAC-SHA256(secret, raw_body_bytes)
+
+webhooks:
+  # Example: Wise payment webhook
+  # "wise.com":
+  #   url: "https://your-backend.example.com/webhook/wise"
+  #   secret: "your-hmac-secret-key"   # enables X-TLSN-Signature header
+  #   headers:
+  #     Authorization: "Bearer your-api-token"
+  #     X-Source: "tlsn-verifier"
+
+  # Example: Twitter/X API webhook
+  # "api.x.com":
+  #   url: "https://your-backend.example.com/webhook/twitter"
+  #   secret: "your-hmac-secret-key"
+  #   headers:
+  #     Authorization: "Bearer your-secret-token"
+  #     X-Source: "tlsn-verifier"
+
+  # Example: GitHub API webhook
+  # "api.github.com":
+  #   url: "https://your-backend.example.com/webhook/github"
+
+  # Wildcard: catch-all for any unmatched server_name
+  # "*":
+  #   url: "https://your-backend.example.com/webhook/default"

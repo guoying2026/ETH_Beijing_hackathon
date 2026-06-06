@@ -13,7 +13,8 @@
     "sync-fx": "tsx src/sync_fx.ts",
     "chain": "npm run node --prefix contracts",
     "chain:deploy": "npm run deploy:demo --prefix contracts",
-    "keeper": "npm run dev --prefix keeper"
+    "keeper": "npm run dev --prefix keeper",
+    "verifier": "cd verifier && cargo run --release"
   },
   "dependencies": {
     "@google/generative-ai": "^0.21.0",
