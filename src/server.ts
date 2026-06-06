@@ -176,6 +176,21 @@ async function getRelevantPolymarketEvents(base: string, quote: string): Promise
   }
 }
 
+// 格式化 RAG 事件以拼接进给 AI 的 Prompt
+function formatEventForLLM(e: any, lang: 'zh' | 'en'): string {
+  const isMulti = e.multiMarkets && e.multiMarkets.length > 0;
+  if (isMulti) {
+    const optionsStr = e.multiMarkets.map((m: any) => `${m.title}: ${(m.odds * 100).toFixed(0)}%`).join(', ');
+    return lang === 'zh'
+      ? `- 事件："${e.title}" (多市场选项) | 细分选项及发生概率：[${optionsStr}]`
+      : `- Event: "${e.title}" (Multi-market) | Outcomes and Odds: [${optionsStr}]`;
+  } else {
+    return lang === 'zh'
+      ? `- 事件："${e.title}" | 发生概率：${(e.odds * 100).toFixed(0)}%`
+      : `- Event: "${e.title}" | Market Odds of occurring: ${(e.odds * 100).toFixed(0)}%`;
+  }
+}
+
 // 健康检查路由，免去频繁调用大模型
 app.get('/api/health', (_req, res) => {
   const provider = process.env.LLM_PROVIDER || 'gemini';
@@ -310,7 +325,7 @@ app.get('/api/fx-intel', async (req, res) => {
       - Current Rate 30-day Percentile: ${percentile30d}% (0% means historical minimum, 100% means historical maximum)
       
        We also retrieved relevant prediction market outcomes from Polymarket (representing crowdsourced odds of macro events):
-      ${ragEvents.map(e => `- Event: "${e.title}" | Market Odds of occurring: ${(e.odds * 100).toFixed(0)}%`).join('\n')}
+      ${ragEvents.map(e => formatEventForLLM(e, 'en')).join('\n')}
       
       Here are the user's long-term memory snippets and preference history retrieved from tencent hy-memory:
       ${memories && memories.length > 0
@@ -359,7 +374,7 @@ app.get('/api/fx-intel', async (req, res) => {
       - 当前汇率处于过去 30 天的历史百分位位置：${percentile30d}%（0% 代表历史最低点，100% 代表历史最高点）
       
       我们还从 Polymarket 预测市场检索到了相关的 crowdsourced（大众共识）宏观事件发生概率：
-      ${ragEvents.map(e => `- 事件："${e.title}" | 市场发生概率：${(e.odds * 100).toFixed(0)}%`).join('\n')}
+      ${ragEvents.map(e => formatEventForLLM(e, 'zh')).join('\n')}
       
       我们还检索到了该用户的长期记忆偏好（User's Long-term memories & transaction history）：
       ${memories && memories.length > 0
