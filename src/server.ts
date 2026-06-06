@@ -176,7 +176,9 @@ async function getRelevantPolymarketEvents(base: string, quote: string): Promise
 
 // 健康检查路由，免去频繁调用大模型
 app.get('/api/health', (_req, res) => {
-  res.json({ status: 'ok' });
+  const provider = process.env.LLM_PROVIDER || 'gemini';
+  const model = provider === 'hunyuan' ? (process.env.HUNYUAN_MODEL || 'hy3-preview') : 'gemini-2.5-flash';
+  res.json({ status: 'ok', provider, model });
 });
 
 // OpenAI 兼容的 Embedding 本地代理接口，供 Hy-Memory 插件做向量转换使用

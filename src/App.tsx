@@ -10,41 +10,33 @@ interface SystemStatus {
   swissBank: 'ok' | 'error';
 }
 
-const T = {
-  zh: {
-    subtitle: '结合了 **Gemini 2.5 AI 时机分析决策 (FX Intel)** 与 **zkTLS 零知识证明网银转账清算** 的去中心化、可信 C2C 汇率交易辅助平台。',
-    extLabel: 'Chrome TLSN 扩展:',
-    extActive: '已加载 (Active)',
-    extMissing: '未检测到 (Missing)',
-    dbLabel: 'Node.js & 数据库:',
-    dbConnected: '已启动 (Connected)',
-    dbOffline: '未连接 (Offline)',
-    verifierLabel: 'Rust 验证器 (:7047):',
-    verifierOnline: '已运行 (Online)',
-    verifierOffline: '未探测 (No Health)',
-    bankLabel: 'SwissBank 网银 (:3000):',
-    bankActive: '运行中 (Active)',
-    bankOffline: '离线 (Offline)',
-    disclaimer: '免责声明：本系统为黑客松项目 Demo 演示展示，所载之汇率分析及预测数据仅供参考，不构成任何真实的投资与理财决策建议。',
-    techStack: '技术栈: Vite + React 19 + TypeScript | Node.js + Express | PostgreSQL + pgvector | Gemini-2.5-flash | TLSNotary',
-  },
-  en: {
-    subtitle: 'A decentralized, trustless C2C FX trading assistant platform combining **Gemini 2.5 AI timing analysis & decisions (FX Intel)** and **zkTLS zero-knowledge banking transfer settlements**.',
-    extLabel: 'Chrome TLSN Extension:',
-    extActive: 'Active',
-    extMissing: 'Missing',
-    dbLabel: 'Node.js & PostgreSQL:',
-    dbConnected: 'Connected',
-    dbOffline: 'Offline',
-    verifierLabel: 'Rust Verifier (:7047):',
-    verifierOnline: 'Online',
-    verifierOffline: 'Offline',
-    bankLabel: 'SwissBank Bank (:3000):',
-    bankActive: 'Active',
-    bankOffline: 'Offline',
-    disclaimer: 'Disclaimer: This system is a hackathon project demo. The FX analysis and predictions provided are for reference only and do not constitute actual financial or investment advice.',
-    techStack: 'Technology Stack: Vite + React 19 + TypeScript | Node.js + Express | PostgreSQL + pgvector | Gemini-2.5-flash | TLSNotary',
-  }
+const getT = (lang: 'zh' | 'en', activeAI: { provider: string; model: string }) => {
+  const modelName = activeAI.provider === 'hunyuan' ? 'Tencent Hunyuan (腾讯混元)' : 'Gemini 2.5';
+  const modelTech = activeAI.provider === 'hunyuan' ? (activeAI.model || 'hy3-preview') : 'Gemini-2.5-flash';
+  
+  return {
+    subtitle: lang === 'zh'
+      ? `结合了 **${modelName} AI 时机分析决策 (FX Intel)** 与 **zkTLS 零知识证明网银转账清算** 的去中心化、可信 C2C 汇率交易辅助平台。`
+      : `A decentralized, trustless C2C FX trading assistant platform combining **${modelName} AI timing analysis & decisions (FX Intel)** and **zkTLS zero-knowledge banking transfer settlements**.`,
+    extLabel: lang === 'zh' ? 'Chrome TLSN 扩展:' : 'Chrome TLSN Extension:',
+    extActive: lang === 'zh' ? '已加载 (Active)' : 'Active',
+    extMissing: lang === 'zh' ? '未检测到 (Missing)' : 'Missing',
+    dbLabel: lang === 'zh' ? 'Node.js & 数据库:' : 'Node.js & PostgreSQL:',
+    dbConnected: lang === 'zh' ? '已启动 (Connected)' : 'Connected',
+    dbOffline: lang === 'zh' ? '未连接 (Offline)' : 'Offline',
+    verifierLabel: lang === 'zh' ? 'Rust 验证器 (:7047):' : 'Rust Verifier (:7047):',
+    verifierOnline: lang === 'zh' ? '已运行 (Online)' : 'Online',
+    verifierOffline: lang === 'zh' ? '未探测 (No Health)' : 'Offline',
+    bankLabel: lang === 'zh' ? 'SwissBank 网银 (:3000):' : 'SwissBank Bank (:3000):',
+    bankActive: lang === 'zh' ? '运行中 (Active)' : 'Active',
+    bankOffline: lang === 'zh' ? '离线 (Offline)' : 'Offline',
+    disclaimer: lang === 'zh'
+      ? '免责声明：本系统为黑客松项目 Demo 演示展示，所载之汇率分析及预测数据仅供参考，不构成任何真实的投资与理财决策建议。'
+      : 'Disclaimer: This system is a hackathon project demo. The FX analysis and predictions provided are for reference only and do not constitute actual financial or investment advice.',
+    techStack: lang === 'zh'
+      ? `技术栈: Vite + React 19 + TypeScript | Node.js + Express | PostgreSQL + pgvector | ${modelTech} | TLSNotary`
+      : `Technology Stack: Vite + React 19 + TypeScript | Node.js + Express | PostgreSQL + pgvector | ${modelTech} | TLSNotary`,
+  };
 };
 
 export function App() {
@@ -55,6 +47,7 @@ export function App() {
   const [horizon, setHorizon] = useState('3d');
   const [analysis, setAnalysis] = useState<any>(null);
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
+  const [activeAI, setActiveAI] = useState<{ provider: string; model: string }>({ provider: 'gemini', model: 'gemini-2.5-flash' });
 
   // AI Agent States
   const [logs, setLogs] = useState<Array<{ time: string; text: string }>>([
@@ -110,6 +103,9 @@ export function App() {
 
   useEffect(() => {
     if (analysis) {
+      if (analysis.provider && analysis.model) {
+        setActiveAI({ provider: analysis.provider, model: analysis.model });
+      }
       addLog(`📡 RAG 数据匹配成功。已关联到 ${analysis.polymarketData?.length || 0} 个相关的 Polymarket 宏观预测盘口。`);
       
       // 打印长期记忆检索状态
@@ -177,7 +173,13 @@ export function App() {
     try {
       const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3001';
       const res = await fetch(`${apiUrl}/api/health`);
-      if (res.ok) newStatus.nodeBackend = 'ok';
+      if (res.ok) {
+        newStatus.nodeBackend = 'ok';
+        const data = await res.json();
+        if (data.provider && data.model) {
+          setActiveAI({ provider: data.provider, model: data.model });
+        }
+      }
     } catch (e) {
       newStatus.nodeBackend = 'error';
     }
@@ -212,7 +214,7 @@ export function App() {
     setPair(selectedPair);
   };
 
-  const t = T[lang];
+  const t = getT(lang, activeAI);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem', minHeight: '90vh' }}>
