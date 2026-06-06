@@ -13,6 +13,7 @@ interface PolymarketEvent {
   odds: number;
   url: string;
   multiMarkets?: Array<{ title: string; odds: number }>;
+  slug?: string;
 }
 
 interface FxData {
@@ -158,6 +159,58 @@ export function FxIntelPanel({
   const [autoInterval, setAutoInterval] = useState<number>(300); // 默认 5 分钟 (300秒)
   const [countdown, setCountdown] = useState<number>(300);
   const [isTimerActive, setIsTimerActive] = useState<boolean>(true);
+  const [realtimeData, setRealtimeData] = useState<Record<string, { loading: boolean; data?: any[]; error?: boolean }>>({});
+
+  const handleMouseEnter = async (slug: string) => {
+    if (!slug) return;
+    if (realtimeData[slug]) return; // Already loading or loaded
+
+    setRealtimeData(prev => ({
+      ...prev,
+      [slug]: { loading: true }
+    }));
+
+    try {
+      const response = await fetch(`https://gamma-api.polymarket.com/events?slug=${slug}`);
+      if (!response.ok) throw new Error(`HTTP error ${response.status}`);
+      const json = await response.json();
+      if (Array.isArray(json) && json.length > 0) {
+        const eventObj = json[0];
+        if (eventObj.markets && Array.isArray(eventObj.markets)) {
+          const activeMarkets = eventObj.markets.filter((m: any) => m.active && !m.closed);
+          const parsed = activeMarkets.map((m: any) => {
+            let prices: any[] = [];
+            if (typeof m.outcomePrices === 'string') {
+              try {
+                prices = JSON.parse(m.outcomePrices);
+              } catch (_) {}
+            } else if (Array.isArray(m.outcomePrices)) {
+              prices = m.outcomePrices;
+            }
+            const yesPrice = prices.length > 0 ? parseFloat(prices[0]) : 0;
+            const optionTitle = m.groupItemTitle || m.question || '';
+            return {
+              title: optionTitle,
+              odds: Number(yesPrice.toFixed(2))
+            };
+          });
+
+          setRealtimeData(prev => ({
+            ...prev,
+            [slug]: { loading: false, data: parsed }
+          }));
+          return;
+        }
+      }
+      throw new Error('No active markets found in response');
+    } catch (err) {
+      console.error(`Failed to fetch real-time odds for slug ${slug}:`, err);
+      setRealtimeData(prev => ({
+        ...prev,
+        [slug]: { loading: false, error: true }
+      }));
+    }
+  };
 
   useEffect(() => {
     if (!loading) {
@@ -944,9 +997,23 @@ export function FxIntelPanel({
           }}>
             {data.polymarketData.map((event) => {
               const isMulti = event.multiMarkets && event.multiMarkets.length > 0;
-              const tooltipText = isMulti
-                ? event.multiMarkets.map((m: any) => `${m.title}: ${(m.odds * 100).toFixed(0)}%`).join('\n')
-                : undefined;
+              
+              let tooltipText = undefined;
+              if (isMulti) {
+                const rtObj = event.slug ? realtimeData[event.slug] : undefined;
+                if (rtObj) {
+                  if (rtObj.loading) {
+                    tooltipText = lang === 'zh' ? '正在获取实时最新赔率...' : 'Fetching latest real-time odds...';
+                  } else if (rtObj.data && rtObj.data.length > 0) {
+                    tooltipText = rtObj.data.map((m: any) => `${m.title}: ${(m.odds * 100).toFixed(0)}%`).join('\n');
+                  } else {
+                    tooltipText = event.multiMarkets ? event.multiMarkets.map((m: any) => `${m.title}: ${(m.odds * 100).toFixed(0)}% (cached)`).join('\n') : undefined;
+                  }
+                } else {
+                  tooltipText = event.multiMarkets ? event.multiMarkets.map((m: any) => `${m.title}: ${(m.odds * 100).toFixed(0)}% (cached)`).join('\n') : undefined;
+                }
+              }
+
               return (
                 <a
                   href={event.url}
@@ -969,6 +1036,9 @@ export function FxIntelPanel({
                   }}
                   onMouseEnter={(e) => {
                     e.currentTarget.style.background = 'var(--bg-subcard-hover)';
+                    if (isMulti && event.slug) {
+                      handleMouseEnter(event.slug);
+                    }
                   }}
                   onMouseLeave={(e) => {
                     e.currentTarget.style.background = 'var(--bg-subcard)';

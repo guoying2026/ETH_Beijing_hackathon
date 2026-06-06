@@ -152,7 +152,7 @@ async function getRelevantPolymarketEvents(base: string, quote: string): Promise
 
     // <=> 操作符计算余弦距离（越小越相似），召回最相关的 20 个事件
     const res = await pool.query(
-      `SELECT id, title, odds, url, multi_markets, (embedding <=> $1) AS distance 
+      `SELECT id, title, odds, url, multi_markets, slug, (embedding <=> $1) AS distance 
        FROM polymarket_events 
        ORDER BY distance ASC, updated_at DESC LIMIT 20`,
       [vectorStr]
@@ -165,7 +165,8 @@ async function getRelevantPolymarketEvents(base: string, quote: string): Promise
         title: r.title,
         odds: r.odds,
         url: r.url,
-        multiMarkets: r.multi_markets
+        multiMarkets: r.multi_markets,
+        slug: r.slug
       }));
     }
     return [];

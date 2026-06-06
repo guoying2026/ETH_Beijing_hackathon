@@ -131,6 +131,59 @@ export function C2CTradeCard({ currentRate, pair, lang, amount, setAmount, analy
   const [requestId, setRequestId] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
 
+  const [realtimeData, setRealtimeData] = useState<Record<string, { loading: boolean; data?: any[]; error?: boolean }>>({});
+
+  const handleMouseEnter = async (slug: string) => {
+    if (!slug) return;
+    if (realtimeData[slug]) return; // Already loading or loaded
+
+    setRealtimeData(prev => ({
+      ...prev,
+      [slug]: { loading: true }
+    }));
+
+    try {
+      const response = await fetch(`https://gamma-api.polymarket.com/events?slug=${slug}`);
+      if (!response.ok) throw new Error(`HTTP error ${response.status}`);
+      const json = await response.json();
+      if (Array.isArray(json) && json.length > 0) {
+        const eventObj = json[0];
+        if (eventObj.markets && Array.isArray(eventObj.markets)) {
+          const activeMarkets = eventObj.markets.filter((m: any) => m.active && !m.closed);
+          const parsed = activeMarkets.map((m: any) => {
+            let prices: any[] = [];
+            if (typeof m.outcomePrices === 'string') {
+              try {
+                prices = JSON.parse(m.outcomePrices);
+              } catch (_) {}
+            } else if (Array.isArray(m.outcomePrices)) {
+              prices = m.outcomePrices;
+            }
+            const yesPrice = prices.length > 0 ? parseFloat(prices[0]) : 0;
+            const optionTitle = m.groupItemTitle || m.question || '';
+            return {
+              title: optionTitle,
+              odds: Number(yesPrice.toFixed(2))
+            };
+          });
+
+          setRealtimeData(prev => ({
+            ...prev,
+            [slug]: { loading: false, data: parsed }
+          }));
+          return;
+        }
+      }
+      throw new Error('No active markets found in response');
+    } catch (err) {
+      console.error(`Failed to fetch real-time odds for slug ${slug}:`, err);
+      setRealtimeData(prev => ({
+        ...prev,
+        [slug]: { loading: false, error: true }
+      }));
+    }
+  };
+
   const [base, quote] = pair.split('/');
 
   // 动态更新初始消息
@@ -203,7 +256,7 @@ export function C2CTradeCard({ currentRate, pair, lang, amount, setAmount, analy
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            content: `用户 guoying_dev 在即期汇率 1 ${base} = ${currentRate.toFixed(4)} ${quote} 时，成功通过 zkTLS 零知识证明锁定并结算了金额为 ${payAmount} ${base} 的 C2C 汇率合约交易。`,
+            content: `用户 guoying_dev 在即期汇率 1 ${base} = ${currentRate.toFixed(4)} ${quote} 时，成功通过 zkTLS 零知识证明锁定并结算了金额为 ${sendAmount} ${base} 的 C2C 汇率合约交易。`,
             userId: 'guoying_dev'
           })
         });
@@ -894,9 +947,23 @@ export function C2CTradeCard({ currentRate, pair, lang, amount, setAmount, analy
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                   {polymarketData.map((ev: any, i: number) => {
                     const isMulti = ev.multiMarkets && ev.multiMarkets.length > 0;
-                    const tooltipText = isMulti
-                      ? ev.multiMarkets.map((m: any) => `${m.title}: ${(m.odds * 100).toFixed(0)}%`).join('\n')
-                      : undefined;
+                    
+                    let tooltipText = undefined;
+                    if (isMulti) {
+                      const rtObj = ev.slug ? realtimeData[ev.slug] : undefined;
+                      if (rtObj) {
+                        if (rtObj.loading) {
+                          tooltipText = lang === 'zh' ? '正在获取实时最新赔率...' : 'Fetching latest real-time odds...';
+                        } else if (rtObj.data && rtObj.data.length > 0) {
+                          tooltipText = rtObj.data.map((m: any) => `${m.title}: ${(m.odds * 100).toFixed(0)}%`).join('\n');
+                        } else {
+                          tooltipText = ev.multiMarkets ? ev.multiMarkets.map((m: any) => `${m.title}: ${(m.odds * 100).toFixed(0)}% (cached)`).join('\n') : undefined;
+                        }
+                      } else {
+                        tooltipText = ev.multiMarkets ? ev.multiMarkets.map((m: any) => `${m.title}: ${(m.odds * 100).toFixed(0)}% (cached)`).join('\n') : undefined;
+                      }
+                    }
+
                     return (
                       <a
                         href={ev.url}
@@ -920,6 +987,9 @@ export function C2CTradeCard({ currentRate, pair, lang, amount, setAmount, analy
                         onMouseEnter={(e) => {
                           e.currentTarget.style.background = 'rgba(99, 102, 241, 0.08)';
                           e.currentTarget.style.borderColor = 'rgba(99, 102, 241, 0.2)';
+                          if (isMulti && ev.slug) {
+                            handleMouseEnter(ev.slug);
+                          }
                         }}
                         onMouseLeave={(e) => {
                           e.currentTarget.style.background = 'rgba(99, 102, 241, 0.04)';

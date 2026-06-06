@@ -38,6 +38,11 @@ export async function initDatabase() {
       ALTER TABLE polymarket_events ADD COLUMN IF NOT EXISTS multi_markets JSONB;
     `);
 
+    // 确保已有表追加 slug 字段
+    await client.query(`
+      ALTER TABLE polymarket_events ADD COLUMN IF NOT EXISTS slug VARCHAR(255);
+    `);
+
     console.log('✅ Table "polymarket_events" is ready.');
   } catch (error) {
     console.error('❌ Database initialization failed:', error);

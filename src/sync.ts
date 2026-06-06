@@ -213,15 +213,16 @@ export async function syncPolymarketData() {
           const vectorStr = `[${embedding.join(',')}]`;
 
           await client.query(
-            `INSERT INTO polymarket_events (id, title, odds, url, embedding, multi_markets) 
-             VALUES ($1, $2, $3, $4, $5, $6)
+            `INSERT INTO polymarket_events (id, title, odds, url, embedding, multi_markets, slug) 
+             VALUES ($1, $2, $3, $4, $5, $6, $7)
              ON CONFLICT (id) DO UPDATE SET 
                odds = EXCLUDED.odds,
                url = EXCLUDED.url,
                title = EXCLUDED.title,
                multi_markets = EXCLUDED.multi_markets,
+               slug = EXCLUDED.slug,
                updated_at = CURRENT_TIMESTAMP`,
-            [id, title, odds, url, vectorStr, multiMarketsData ? JSON.stringify(multiMarketsData) : null]
+            [id, title, odds, url, vectorStr, multiMarketsData ? JSON.stringify(multiMarketsData) : null, eventSlug]
           );
 
           insertedCount++;
