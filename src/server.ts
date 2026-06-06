@@ -142,6 +142,61 @@ function generateHistory(rate: number) {
   return history;
 }
 
+// 从 Frankfurter API 获取真实的 30 天历史汇率
+async function fetchRealHistory(base: string, quote: string): Promise<Array<{ date: string; rate: number }>> {
+  if (base === quote) {
+    const history = [];
+    const now = new Date();
+    for (let i = 29; i >= 0; i--) {
+      const date = new Date(now.getTime() - i * 24 * 60 * 60 * 1000);
+      history.push({
+        date: date.toISOString().split('T')[0],
+        rate: 1.0,
+      });
+    }
+    return history;
+  }
+
+  try {
+    const endDate = new Date();
+    const startDate = new Date();
+    startDate.setDate(endDate.getDate() - 35); // 取 35 天前，以保证剔除周末后至少有 20-25 个交易日数据
+
+    const endStr = endDate.toISOString().split('T')[0];
+    const startStr = startDate.toISOString().split('T')[0];
+
+    const url = `https://api.frankfurter.app/${startStr}..${endStr}?from=${base}&to=${quote}`;
+    console.log(`📡 Fetching real history from: ${url}`);
+    
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`Frankfurter API returned status ${response.status}`);
+    }
+    const data = await response.json() as any;
+    if (data && data.rates) {
+      const history: Array<{ date: string; rate: number }> = [];
+      const dates = Object.keys(data.rates).sort();
+      for (const d of dates) {
+        const rateVal = data.rates[d][quote];
+        if (rateVal !== undefined) {
+          history.push({
+            date: d,
+            rate: Number(rateVal.toFixed(4))
+          });
+        }
+      }
+      if (history.length > 0) {
+        console.log(`✅ Successfully fetched ${history.length} real history points from Frankfurter.`);
+        return history.slice(-30);
+      }
+    }
+    throw new Error('Invalid JSON structure returned from Frankfurter');
+  } catch (error) {
+    console.warn('⚠️ Failed to fetch real history, using fallback brownian simulation:', error instanceof Error ? error.message : String(error));
+    return [];
+  }
+}
+
 // 召回与当前货币对最相关的 Polymarket 事件 (本地 RAG)
 async function getRelevantPolymarketEvents(base: string, quote: string): Promise<any[]> {
   const queryText = `Analyze exchange rate trends and macro factors for ${base} to ${quote} exchange.`;
@@ -274,8 +329,13 @@ app.get('/api/fx-intel', async (req, res) => {
     totalCostFactor = baseSpread + slippage;
     effectiveRate = currentRate * (1 - totalCostFactor);
 
-    // 2. 生成历史走势
-    history = generateHistory(currentRate);
+    // 2. 生成历史走势（优先从真实的 API 获取，如果失败再降级使用布朗运动模拟）
+    const realHistory = await fetchRealHistory(base, quote);
+    if (realHistory && realHistory.length > 0) {
+      history = realHistory;
+    } else {
+      history = generateHistory(currentRate);
+    }
 
     // 3. 计算 7d 和 30d 的变化率以及波动率特征
     const startRate30d = history[0]?.rate || currentRate;
