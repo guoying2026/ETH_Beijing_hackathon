@@ -156,8 +156,8 @@ export function FxIntelPanel({
   const [loadingStep, setLoadingStep] = useState(0);
   const [data, setData] = useState<FxData | null>(null);
   const [hoveredPoint, setHoveredPoint] = useState<{ date: string; rate: number; index: number } | null>(null);
-  const [autoInterval, setAutoInterval] = useState<number>(300); // 默认 5 分钟 (300秒)
-  const [countdown, setCountdown] = useState<number>(300);
+  const [autoInterval, setAutoInterval] = useState<number>(540000); // 默认 9000 分钟 (540000秒)
+  const [countdown, setCountdown] = useState<number>(540000);
   const [isTimerActive, setIsTimerActive] = useState<boolean>(true);
   const [realtimeData, setRealtimeData] = useState<Record<string, { loading: boolean; data?: any[]; error?: boolean }>>({});
   const [isRefreshingHistory, setIsRefreshingHistory] = useState(false);
