@@ -169,9 +169,11 @@ export function App() {
       swissBank: 'error',
     };
 
+    const currentHost = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
+
     // 1. 探测 Node.js 后端服务
     try {
-      const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+      const apiUrl = import.meta.env.VITE_API_URL || `http://${currentHost}:3001`;
       const res = await fetch(`${apiUrl}/api/health`);
       if (res.ok) {
         newStatus.nodeBackend = 'ok';
@@ -186,7 +188,7 @@ export function App() {
 
     // 2. 探测 Rust Verifier 服务 (:7047)
     try {
-      const res = await fetch('http://localhost:7047/health');
+      const res = await fetch(`http://${currentHost}:7047/health`);
       if (res.ok) newStatus.rustVerifier = 'ok';
     } catch (e) {
       newStatus.rustVerifier = 'error';
@@ -194,7 +196,7 @@ export function App() {
 
     // 3. 探测 SwissBank 网银服务 (:3000)
     try {
-      const res = await fetch('http://localhost:3000/account');
+      const res = await fetch(`http://${currentHost}:3000/account`);
       if (res.status === 200 || res.status === 404) newStatus.swissBank = 'ok';
     } catch (e) {
       newStatus.swissBank = 'error';
