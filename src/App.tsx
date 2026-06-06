@@ -78,6 +78,15 @@ export function App() {
     return () => clearInterval(interval);
   }, []);
 
+  const handleCopyExtensionsUrl = (e: React.MouseEvent) => {
+    e.preventDefault();
+    navigator.clipboard.writeText("chrome://extensions/");
+    alert(lang === 'zh' 
+      ? "📋 已自动复制地址：chrome://extensions/\n\n由于 Chrome 浏览器安全策略限制，网页无法直接跳转至本地 chrome:// 协议页面。请在浏览器中新建一个标签页，将刚才复制的地址粘贴（Cmd+V / Ctrl+V）到地址栏中，然后按回车键即可打开！" 
+      : "📋 Copied to clipboard: chrome://extensions/\n\nDue to Chrome browser security policies, web pages cannot redirect to local chrome:// protocol pages directly. Please open a new tab, paste the copied address into your address bar, and press Enter to open it."
+    );
+  };
+
   const checkAndSwitchNetwork = async (ethereum: any) => {
     try {
       const targetChainIdHex = `0x${CHAIN_ID.toString(16)}`;
@@ -507,9 +516,9 @@ export function App() {
                   <div style={{ fontWeight: 600, fontSize: '0.85rem' }}>{lang === 'zh' ? '进入 Chrome 扩展管理' : 'Open Extensions Page'}</div>
                   <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
                     {lang === 'zh' ? (
-                      <span>打开 Chrome 浏览器，访问 <a href="chrome://extensions/" target="_blank" rel="noreferrer" style={{ textDecoration: 'underline', color: 'var(--primary)', cursor: 'pointer' }}>chrome://extensions/</a>。</span>
+                      <span>打开 Chrome 浏览器，访问 <a href="chrome://extensions/" onClick={handleCopyExtensionsUrl} style={{ textDecoration: 'underline', color: 'var(--primary)', cursor: 'pointer' }}>chrome://extensions/</a>。</span>
                     ) : (
-                      <span>Go to <a href="chrome://extensions/" target="_blank" rel="noreferrer" style={{ textDecoration: 'underline', color: 'var(--primary)', cursor: 'pointer' }}>chrome://extensions/</a> in your Chrome browser.</span>
+                      <span>Go to <a href="chrome://extensions/" onClick={handleCopyExtensionsUrl} style={{ textDecoration: 'underline', color: 'var(--primary)', cursor: 'pointer' }}>chrome://extensions/</a> in your Chrome browser.</span>
                     )}
                   </div>
                 </div>
