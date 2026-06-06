@@ -90,17 +90,9 @@ export function App() {
   };
 
   const handleRecheckExtension = () => {
-    const detected = !!(window as any).tlsn;
-    setHasExtension(detected);
-    if (detected) {
-      setToastMessage(lang === 'zh' ? "✅ zkTLS 扩展检测成功，已成功加载并激活！" : "✅ zkTLS extension detected and activated successfully!");
-      setShowGuide(false);
-    } else {
-      setToastMessage(lang === 'zh' ? "❌ 未检测到 zkTLS 扩展！请确认已在管理页中“启用”该插件并刷新。" : "❌ Extension not detected! Please ensure it is enabled in settings and refresh.");
-    }
-    setTimeout(() => {
-      setToastMessage(null);
-    }, 3000);
+    // 刚启用或安装的 Chrome 扩展只有在页面重新加载时才会注入 content script (window.tlsn)。
+    // 因此，重新检测必须通过刷新页面来实现。
+    window.location.reload();
   };
 
   const checkAndSwitchNetwork = async (ethereum: any) => {
