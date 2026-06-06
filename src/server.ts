@@ -233,6 +233,7 @@ app.get('/api/fx-intel', async (req, res) => {
   let change30d = 0;
   let ragEvents: any[] = [];
   let memories: any[] = [];
+  const provider = process.env.LLM_PROVIDER || 'gemini';
 
   try {
     // 1. 获取汇率
@@ -391,7 +392,6 @@ app.get('/api/fx-intel', async (req, res) => {
     const promptLang = process.env.PROMPT_LANG || 'en';
     const prompt = promptLang === 'zh' ? promptZh : promptEn;
 
-    const provider = process.env.LLM_PROVIDER || 'gemini';
     let textResponse = '';
 
     if (provider === 'hunyuan') {
