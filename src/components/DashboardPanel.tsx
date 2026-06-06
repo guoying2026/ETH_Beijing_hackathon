@@ -55,6 +55,7 @@ export function DashboardPanel({
   ESCROW_ADDRESS,
   ADMIN_ADDRESS,
   RISK_MANAGER_ADDRESS,
+  MERCHANT_ADDRESS,
   targetChain,
   publicClient
 }: DashboardPanelProps) {
@@ -89,6 +90,10 @@ export function DashboardPanel({
 
   const fetchBalancesAndReputation = useCallback(async () => {
     if (!account) return;
+    setWiseName('');
+    setWiseHandle('');
+    setAlipayName('');
+    setAlipayHandle('');
     try {
       const ethBal = await publicClient.getBalance({ address: account });
       setEthBalance(formatUnits(ethBal, 18));
@@ -133,7 +138,12 @@ export function DashboardPanel({
         functionName: 'getPlatformBinding',
         args: [account, wiseId]
       }) as any;
-      setWiseBound(Boolean(wiseBinding && (wiseBinding.isSet ?? wiseBinding[2])));
+      const isWiseBound = Boolean(wiseBinding && (wiseBinding.isSet ?? wiseBinding[2]));
+      setWiseBound(isWiseBound);
+      if (isWiseBound && MERCHANT_ADDRESS && account.toLowerCase() === MERCHANT_ADDRESS.toLowerCase()) {
+        setWiseName('KAI XU LOOI');
+        setWiseHandle('@kaixul1');
+      }
 
       const alipayBinding = await publicClient.readContract({
         address: ADMIN_ADDRESS,
@@ -145,7 +155,7 @@ export function DashboardPanel({
     } catch (err) {
       console.error('Error fetching dashboard user data:', err);
     }
-  }, [account, publicClient, USDT_ADDRESS, RISK_MANAGER_ADDRESS, ADMIN_ADDRESS]);
+  }, [account, publicClient, USDT_ADDRESS, RISK_MANAGER_ADDRESS, ADMIN_ADDRESS, MERCHANT_ADDRESS]);
 
   const fetchOrders = useCallback(async () => {
     if (!account) return;

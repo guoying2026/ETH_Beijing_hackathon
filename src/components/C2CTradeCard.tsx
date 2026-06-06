@@ -271,18 +271,19 @@ export function C2CTradeCard({ currentRate, pair, lang, amount, setAmount, analy
 
   // Fetch balances & reputation
   useEffect(() => {
-    if (!account) return;
+    const userAddress = account;
+    if (!userAddress) return;
 
     const fetchUserData = async () => {
       try {
-        const ethBal = await publicClient.getBalance({ address: account });
+        const ethBal = await publicClient.getBalance({ address: userAddress });
         setEthBalance(formatUnits(ethBal, 18));
 
         const usdtBal = await publicClient.readContract({
           address: USDT_ADDRESS,
           abi: ERC20_ABI,
           functionName: 'balanceOf',
-          args: [account],
+          args: [userAddress],
         }) as bigint;
         setUsdtBalance(formatUnits(usdtBal, 18));
 
@@ -290,14 +291,14 @@ export function C2CTradeCard({ currentRate, pair, lang, amount, setAmount, analy
           address: RISK_MANAGER_ADDRESS,
           abi: C2C_RISK_MANAGER_ABI,
           functionName: 'getReputation',
-          args: [account],
+          args: [userAddress],
         }) as any;
         
         const bps = await publicClient.readContract({
           address: RISK_MANAGER_ADDRESS,
           abi: C2C_RISK_MANAGER_ABI,
           functionName: 'requiredBondBps',
-          args: [account],
+          args: [userAddress],
         }) as number;
 
         setRequiredBondBps(bps);
@@ -318,51 +319,54 @@ export function C2CTradeCard({ currentRate, pair, lang, amount, setAmount, analy
     try {
       const fetched = [];
       for (const pId of [0n, 1n]) {
-        // 去掉内部的 try-catch，让任何查询错误直接向外抛出
-        const prodInfo = await publicClient.readContract({
-          address: ESCROW_ADDRESS,
-          abi: C2C_ESCROW_ABI,
-          functionName: 'getProductInfo',
-          args: [MERCHANT_ADDRESS, pId, 0],
-        }) as any;
+        try {
+          const prodInfo = await publicClient.readContract({
+            address: ESCROW_ADDRESS,
+            abi: C2C_ESCROW_ABI,
+            functionName: 'getProductInfo',
+            args: [MERCHANT_ADDRESS, pId, 0],
+          }) as any;
 
-        const rateInfo = await publicClient.readContract({
-          address: ADMIN_ADDRESS,
-          abi: C2C_ADMIN_ABI,
-          functionName: 'getMerchantRate',
-          args: [MERCHANT_ADDRESS, pId, 0],
-        }) as any;
+          const rateInfo = await publicClient.readContract({
+            address: ADMIN_ADDRESS,
+            abi: C2C_ADMIN_ABI,
+            functionName: 'getMerchantRate',
+            args: [MERCHANT_ADDRESS, pId, 0],
+          }) as any;
 
-        const isOpen = await publicClient.readContract({
-          address: ADMIN_ADDRESS,
-          abi: C2C_ADMIN_ABI,
-          functionName: 'isMerchantOpen',
-          args: [MERCHANT_ADDRESS, pId, 0],
-        }) as boolean;
+          const isOpen = await publicClient.readContract({
+            address: ADMIN_ADDRESS,
+            abi: C2C_ADMIN_ABI,
+            functionName: 'isMerchantOpen',
+            args: [MERCHANT_ADDRESS, pId, 0],
+          }) as boolean;
 
-        const platformId = (prodInfo.platformId ?? prodInfo[4]) as `0x${string}`;
-        let platformName = 'Unknown';
-        const platformIdLower = platformId.toLowerCase();
-        const wiseId = keccak256(stringToBytes('wise')).toLowerCase();
-        const alipayId = keccak256(stringToBytes('alipay')).toLowerCase();
+          const platformId = (prodInfo.platformId ?? prodInfo[4]) as `0x${string}`;
+          let platformName = 'Unknown';
+          const platformIdLower = platformId.toLowerCase();
+          const wiseId = keccak256(stringToBytes('wise')).toLowerCase();
+          const alipayId = keccak256(stringToBytes('alipay')).toLowerCase();
 
-        if (platformIdLower === wiseId) {
-          platformName = 'Wise';
-        } else if (platformIdLower === alipayId) {
-          platformName = 'Alipay';
+          if (platformIdLower === wiseId) {
+            platformName = 'Wise';
+          } else if (platformIdLower === alipayId) {
+            platformName = 'Alipay';
+          }
+
+          const rateVal = Number(rateInfo.rate ?? rateInfo[0]) / 1e8;
+
+          fetched.push({
+            productId: pId,
+            platformId,
+            platformName,
+            rate: rateVal,
+            rateVersion: rateInfo.version ?? rateInfo[1],
+            availableAmount: prodInfo.availableAmount ?? prodInfo[7],
+            isOpen
+          });
+        } catch (e) {
+          console.warn(`Product ID ${pId} not listed or failed to fetch:`, e);
         }
-
-        const rateVal = Number(rateInfo.rate ?? rateInfo[0]) / 1e8;
-
-        fetched.push({
-          productId: pId,
-          platformId,
-          platformName,
-          rate: rateVal,
-          rateVersion: rateInfo.version ?? rateInfo[1],
-          availableAmount: prodInfo.availableAmount ?? prodInfo[7],
-          isOpen
-        });
       }
       setContractProducts(fetched);
     } catch (err) {

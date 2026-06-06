@@ -4,7 +4,7 @@ import { C2CTradeCard } from './components/C2CTradeCard';
 import { DashboardPanel } from './components/DashboardPanel';
 import { MerchantPanel } from './components/MerchantPanel';
 import { AdminPanel } from './components/AdminPanel';
-import { Shield, HelpCircle, Languages, Sun, Moon, Bot, Terminal, X, User, Store, ShieldAlert } from 'lucide-react';
+import { Shield, HelpCircle, Languages, Sun, Moon, Bot, Terminal, X, User, Store, ShieldAlert, Wallet } from 'lucide-react';
 import { createPublicClient, http } from 'viem';
 import { hardhat, sepolia } from 'viem/chains';
 
@@ -67,6 +67,43 @@ export function App() {
   const [appTab, setAppTab] = useState<'trade' | 'dashboard' | 'merchant' | 'admin'>('trade');
   const [account, setAccount] = useState<`0x${string}` | null>(null);
 
+  const checkAndSwitchNetwork = async (ethereum: any) => {
+    try {
+      const targetChainIdHex = `0x${CHAIN_ID.toString(16)}`;
+      const currentChainId = await ethereum.request({ method: 'eth_chainId' });
+      if (currentChainId !== targetChainIdHex) {
+        try {
+          await ethereum.request({
+            method: 'wallet_switchEthereumChain',
+            params: [{ chainId: targetChainIdHex }],
+          });
+        } catch (switchError: any) {
+          if (switchError.code === 4902) {
+            await ethereum.request({
+              method: 'wallet_addEthereumChain',
+              params: [
+                {
+                  chainId: targetChainIdHex,
+                  chainName: targetChain.name,
+                  rpcUrls: [import.meta.env.VITE_RPC_URL || 'http://127.0.0.1:8545'],
+                  nativeCurrency: {
+                    name: 'ETH',
+                    symbol: 'ETH',
+                    decimals: 18,
+                  },
+                },
+              ],
+            });
+          } else {
+            console.error('Failed to switch network:', switchError);
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Error switching network:', err);
+    }
+  };
+
   const connectWallet = async () => {
     const ethereum = typeof window !== 'undefined' ? (window as any).ethereum : undefined;
     if (typeof ethereum !== 'undefined') {
@@ -74,6 +111,7 @@ export function App() {
         const addresses = await ethereum.request({ method: 'eth_requestAccounts' });
         if (addresses.length > 0) {
           setAccount(addresses[0] as `0x${string}`);
+          await checkAndSwitchNetwork(ethereum);
         }
       } catch (err) {
         console.error(err);
@@ -90,6 +128,7 @@ export function App() {
         .then((accounts: string[]) => {
           if (accounts.length > 0) {
             setAccount(accounts[0] as `0x${string}`);
+            checkAndSwitchNetwork(ethereum);
           }
         })
         .catch(console.error);
@@ -97,14 +136,21 @@ export function App() {
       const handleAccountsChanged = (accounts: string[]) => {
         if (accounts.length > 0) {
           setAccount(accounts[0] as `0x${string}`);
+          checkAndSwitchNetwork(ethereum);
         } else {
           setAccount(null);
         }
       };
 
+      const handleChainChanged = () => {
+        window.location.reload();
+      };
+
       ethereum.on('accountsChanged', handleAccountsChanged);
+      ethereum.on('chainChanged', handleChainChanged);
       return () => {
         ethereum?.removeListener('accountsChanged', handleAccountsChanged);
+        ethereum?.removeListener('chainChanged', handleChainChanged);
       };
     }
   }, []);
@@ -239,6 +285,31 @@ export function App() {
       {/* 头部标题区域 */}
       <header style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', gap: '0.75rem', marginTop: '1rem', position: 'relative', width: '100%' }}>
         <div style={{ position: 'absolute', right: '10px', top: '0px', display: 'flex', gap: '8px' }}>
+          <button
+            onClick={connectWallet}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              background: account ? 'rgba(16, 185, 129, 0.1)' : 'rgba(99, 102, 241, 0.1)',
+              border: account ? '1px solid rgba(16, 185, 129, 0.2)' : '1px solid rgba(99, 102, 241, 0.2)',
+              padding: '6px 14px',
+              borderRadius: '20px',
+              color: account ? '#10b981' : 'inherit',
+              cursor: account ? 'default' : 'pointer',
+              fontSize: '0.85rem',
+              fontWeight: 600,
+              transition: 'all 0.2s ease',
+            }}
+          >
+            <Wallet size={14} color={account ? '#10b981' : 'var(--primary)'} />
+            <span>
+              {account 
+                ? `${account.slice(0, 6)}...${account.slice(-4)}` 
+                : (lang === 'zh' ? '连接钱包' : 'Connect Wallet')}
+            </span>
+          </button>
+
           <button
             onClick={() => setTheme(t => t === 'dark' ? 'light' : 'dark')}
             style={{

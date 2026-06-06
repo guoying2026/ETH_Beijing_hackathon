@@ -5,6 +5,38 @@ import { C2C_ADMIN_ABI, C2C_ESCROW_ABI, C2C_BOND_VAULT_ABI, ERC20_ABI } from '..
 
 const getEthereum = () => typeof window !== 'undefined' ? (window as any).ethereum : undefined;
 
+const buildContractProofObj = (proof: any) => {
+  const sig = proof.verifierSignature;
+  const policyVersionHash = sig.policyVersionHash || keccak256(stringToBytes(sig.policyVersion || 'v1.0.0'));
+  return {
+    chainId: BigInt(sig.chainId ?? 0),
+    sessionId: sig.sessionId,
+    commitmentsHash: sig.commitmentsHash.startsWith('0x') ? sig.commitmentsHash : `0x${sig.commitmentsHash}`,
+    orderBindingHash: sig.orderBindingHash.startsWith('0x') ? sig.orderBindingHash : `0x${sig.orderBindingHash}`,
+    policyVersionHash: policyVersionHash.startsWith('0x') ? policyVersionHash : `0x${policyVersionHash}`,
+    verifierSignature: sig.signature.startsWith('0x') ? sig.signature : `0x${sig.signature}`,
+    revealedItems: proof.results.map((r: any) => ({
+      handlerType: r.type,
+      part: r.part,
+      value: r.value,
+      commitment_index: BigInt(r.commitmentIndex ?? 0),
+      start_item: BigInt(r.start ?? 0),
+      end_item: BigInt(r.end ?? 0),
+      start_value: BigInt(r.startValue ?? 0),
+      end_value: BigInt(r.endValue ?? r.value?.length ?? 0),
+    })),
+    commitmentOpenings: (proof.transcriptCommitOpenings || []).map((o: any) => ({
+      blinderHex: o.blinderHex.startsWith('0x') ? o.blinderHex : `0x${o.blinderHex}`,
+    })),
+    commitments: (proof.transcriptCommitments || []).map((c: any) => ({
+      direction: c.direction === 'RECV' ? 'Recv' : 'Sent',
+      hashAlg: c.hashAlg ?? 'Keccak256',
+      hashValue: c.hashHex.startsWith('0x') ? c.hashHex : `0x${c.hashHex}`,
+    })),
+    serverName: proof.serverName ?? '',
+  };
+};
+
 interface MerchantPanelProps {
   account: `0x${string}` | null;
   connectWallet: () => Promise<void>;
@@ -333,6 +365,9 @@ export function MerchantPanel({
   const handleRegister = async () => {
     if (!account) return;
     setIsRegistering(true);
+    setErrorMsg('');
+    setProveProgress(10);
+    setProveMessage(lang === 'zh' ? '🔐 准备开始实名入驻验证...' : '🔐 Initializing KYC/KYB registration verification...');
     try {
       const ethereum = getEthereum();
       if (!ethereum) throw new Error('MetaMask not detected');
@@ -342,7 +377,9 @@ export function MerchantPanel({
         transport: custom(ethereum)
       });
 
-      // Approve bond vault
+      // 1. Approve bond vault
+      setProveProgress(20);
+      setProveMessage(lang === 'zh' ? '⚙️ 正在授权质押基础保证金...' : '⚙️ Approving bond vault for collateral...');
       const bondUnits = parseUnits(registerStake, 18);
       const approveTx = await (walletClient as any).writeContract({
         address: USDT_ADDRESS,
@@ -352,28 +389,50 @@ export function MerchantPanel({
       });
       await publicClient.waitForTransactionReceipt({ hash: approveTx });
 
-      // Merchant registration mock proof
-      const dummyProof = {
-        chainId: BigInt(targetChain.id),
-        sessionId: 'merchant_reg_' + Date.now(),
-        commitmentsHash: '0x0000000000000000000000000000000000000000000000000000000000000000',
-        orderBindingHash: '0x0000000000000000000000000000000000000000000000000000000000000000',
-        policyVersionHash: '0x0000000000000000000000000000000000000000000000000000000000000000',
-        verifierSignature: '0x0000000000000000000000000000000000000000000000000000000000000000',
-        revealedItems: [],
-        commitmentOpenings: [],
-        commitments: [],
-        serverName: 'Alipay'
-      };
+      // 2. Real zkTLS Registration Verification
+      if (!(window as any).tlsn) {
+        throw new Error(lang === 'zh' ? '未检测到 zkTLS 浏览器插件！请先安装并启用 tlsn-extension。' : 'zkTLS extension not detected! Please install and enable tlsn-extension first.');
+      }
+
+      setProveProgress(40);
+      setProveMessage(lang === 'zh' ? '⚡ 正在加载支付宝 KYB 实名验证插件...' : '⚡ Loading Alipay KYB registration plugin...');
+
+      const pluginUrl = '/plugins/alipay.js';
+      const resPlugin = await fetch(pluginUrl);
+      if (!resPlugin.ok) throw new Error('Alipay plugin load failed');
+      let pluginCode = await resPlugin.text();
+
+      // For registration flow, we construct a dummy orderBindingHash placeholder
+      const orderBindingHash = '0x0000000000000000000000000000000000000000000000000000000000000000';
+      pluginCode = pluginCode
+        .replace(/"0x0000000000000000000000000000000000000000000000000000000000000001"/g, `"${orderBindingHash}"`)
+        .replace(/'0x0000000000000000000000000000000000000000000000000000000000000001'/g, `'${orderBindingHash}'`);
+
+      setProveProgress(60);
+      setProveMessage(lang === 'zh' ? '✍️ 请在浏览器插件弹窗中登录并完成实名公证...' : '✍️ Please log in and complete notary in extension window...');
+
+      const reqId = `merchant_reg_${Date.now()}`;
+      const resultStr = await (window as any).tlsn.execCode(pluginCode, {
+        requestId: reqId,
+        sessionData: { mode: 'Mpc' }
+      });
+
+      const parsedResult = JSON.parse(resultStr);
+      setProveProgress(80);
+      setProveMessage(lang === 'zh' ? '✅ zkTLS 实名证明生成成功！正在提交链上注册入驻...' : '✅ KYB proof generated! Submitting registration transaction...');
+
+      const proofObj = buildContractProofObj(parsedResult);
 
       const regTx = await (walletClient as any).writeContract({
         address: ADMIN_ADDRESS,
         abi: C2C_ADMIN_ABI,
         functionName: 'registerMerchant',
-        args: [dummyProof]
+        args: [proofObj]
       });
 
       await publicClient.waitForTransactionReceipt({ hash: regTx });
+      setProveProgress(100);
+      setProveMessage('');
       alert(lang === 'zh' ? '商户资质已通过 zkTLS KYB 实名验证，入驻成功！' : 'Successfully registered as merchant with zkTLS KYB proof!');
       fetchMerchantStatus();
     } catch (e: any) {
@@ -381,6 +440,8 @@ export function MerchantPanel({
       alert(e.message || e);
     } finally {
       setIsRegistering(false);
+      setProveProgress(0);
+      setProveMessage('');
     }
   };
 
@@ -614,64 +675,84 @@ export function MerchantPanel({
     }
   };
 
-  // Merchant release escrow with proof for Fiat Orders
-  const handleMerchantSettleFiatOrder = async (order: MerchantOrder, isMock: boolean) => {
+  // Merchant release escrow with proof for Fiat Orders (Real zkTLS)
+  const handleMerchantSettleFiatOrder = async (order: MerchantOrder) => {
     if (!account) return;
     setProvingStatus('proving');
     setErrorMsg('');
     setProveProgress(10);
-    setProveMessage(lang === 'zh' ? '🔐 建立加密连接验证收款单据...' : '🔐 Connecting to wise API...');
+    setProveMessage(lang === 'zh' ? '🔐 建立加密连接并准备开始清算证明...' : '🔐 Connecting to platform APIs...');
 
-    if (isMock) {
-      try {
-        await new Promise(r => setTimeout(r, 1200));
-        setProveProgress(40);
-        setProveMessage(lang === 'zh' ? '⚡ 正在提取 Wise 出账付款流水证明...' : '⚡ Grabbing Wise payout transfer slip...');
-        await new Promise(r => setTimeout(r, 1500));
-        setProveProgress(80);
-        setProveMessage(lang === 'zh' ? '🛡️ 正在生成不可伪造的零知识证明...' : '🛡️ Compiling zero-knowledge proof...');
-        await new Promise(r => setTimeout(r, 1200));
-        setProveProgress(100);
-        setProveMessage(lang === 'zh' ? '✅ 证明生成成功！正在清算释放代币...' : '✅ Settle proof verified! Settling escrow...');
+    if (!(window as any).tlsn) {
+      setErrorMsg(lang === 'zh' ? '未检测到 TLSNotary 浏览器扩展插件！' : 'TLSNotary extension not detected!');
+      setProvingStatus('error');
+      return;
+    }
 
-        const ethereum = getEthereum();
-        if (!ethereum) throw new Error('MetaMask not detected');
-        const walletClient = createWalletClient({
-          account,
-          chain: targetChain,
-          transport: custom(ethereum)
-        });
+    try {
+      const ethereum = getEthereum();
+      if (!ethereum) throw new Error('MetaMask not detected');
+      const walletClient = createWalletClient({
+        account,
+        chain: targetChain,
+        transport: custom(ethereum)
+      });
 
-        // Dummy proofs array
-        const dummyProofs = [{
-          chainId: BigInt(targetChain.id),
-          sessionId: 'merchant_settle_' + Date.now(),
-          commitmentsHash: '0x0000000000000000000000000000000000000000000000000000000000000000',
-          orderBindingHash: '0x0000000000000000000000000000000000000000000000000000000000000000',
-          policyVersionHash: '0x0000000000000000000000000000000000000000000000000000000000000000',
-          verifierSignature: '0x0000000000000000000000000000000000000000000000000000000000000000',
-          revealedItems: [],
-          commitmentOpenings: [],
-          commitments: [],
-          serverName: 'Wise'
-        }];
+      // Construct context orderBindingHash placeholder
+      const orderBindingHash = '0x0000000000000000000000000000000000000000000000000000000000000000';
+      
+      const pluginUrl = order.platformName.toLowerCase() === 'alipay' ? '/plugins/alipay.js' : '/plugins/wise.js';
+      setProveProgress(30);
+      setProveMessage(lang === 'zh' ? `⚡ 正在加载 ${order.platformName} 清算插件...` : `⚡ Loading ${order.platformName} settlement plugin...`);
+      
+      const resPlugin = await fetch(pluginUrl);
+      if (!resPlugin.ok) throw new Error('Plugin load failed');
+      let pluginCode = await resPlugin.text();
 
-        // Settle Fiat Order by merchant
-        const hash = await (walletClient as any).writeContract({
-          address: ESCROW_ADDRESS,
-          abi: C2C_ESCROW_ABI,
-          functionName: 'receiveCryptoWithPlatformPayment',
-          args: [order.productId, order.orderId, dummyProofs]
-        });
+      // Simple replacement
+      pluginCode = pluginCode
+        .replace(/"0x0000000000000000000000000000000000000000000000000000000000000001"/g, `"${orderBindingHash}"`)
+        .replace(/'0x0000000000000000000000000000000000000000000000000000000000000001'/g, `'${orderBindingHash}'`);
 
-        await publicClient.waitForTransactionReceipt({ hash });
-        setProvingStatus('success');
-        fetchOrders();
-      } catch (err: any) {
-        console.error(err);
-        setErrorMsg(err.message || 'Settle failed');
-        setProvingStatus('error');
+      setProveProgress(50);
+      setProveMessage(lang === 'zh' ? '✍️ 请在浏览器弹窗中登录网银并完成公证...' : '✍️ Please log in and complete notary in browser...');
+
+      const reqId = `merchant_settle_${Date.now()}`;
+      const resultStr = await (window as any).tlsn.execCode(pluginCode, {
+        requestId: reqId,
+        sessionData: { mode: 'Mpc' }
+      });
+
+      const parsedResult = JSON.parse(resultStr);
+      setProveProgress(80);
+      setProveMessage(lang === 'zh' ? '✅ zkTLS 证明生成成功！正在提交智能合约释放资金...' : '✅ Proof success! Releasing funds in escrow...');
+
+      let proofsArr = [];
+      if (order.platformName.toLowerCase() === 'wise') {
+        const wiseProofs = parsedResult.proofs || parsedResult;
+        proofsArr = [
+          buildContractProofObj(wiseProofs.contacts),
+          buildContractProofObj(wiseProofs.transfer)
+        ];
+      } else {
+        proofsArr = [buildContractProofObj(parsedResult)];
       }
+
+      // Settle Fiat Order by merchant
+      const hash = await (walletClient as any).writeContract({
+        address: ESCROW_ADDRESS,
+        abi: C2C_ESCROW_ABI,
+        functionName: 'receiveCryptoWithPlatformPayment',
+        args: [order.productId, order.orderId, proofsArr]
+      });
+
+      await publicClient.waitForTransactionReceipt({ hash });
+      setProvingStatus('success');
+      fetchOrders();
+    } catch (err: any) {
+      console.error(err);
+      setErrorMsg(err.message || 'Settle failed');
+      setProvingStatus('error');
     }
   };
 
@@ -712,14 +793,21 @@ export function MerchantPanel({
                   placeholder="100"
                 />
               </div>
-              <button
-                onClick={handleRegister}
-                disabled={isRegistering || !registerStake}
-                className="btn-primary"
-                style={{ width: '100%', padding: '10px', fontSize: '0.9rem' }}
-              >
-                {isRegistering ? (lang === 'zh' ? '验证注册中...' : 'Verifying...') : (lang === 'zh' ? '自愿质押入驻成为承兑商 (Mock)' : 'Verify & Register')}
-              </button>
+              {isRegistering ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', alignItems: 'center', marginTop: '10px' }}>
+                  <Loader2 size={24} className="animate-spin" color="var(--primary)" />
+                  <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{proveMessage}</span>
+                </div>
+              ) : (
+                <button
+                  onClick={handleRegister}
+                  disabled={!registerStake}
+                  className="btn-primary"
+                  style={{ width: '100%', padding: '10px', fontSize: '0.9rem' }}
+                >
+                  {lang === 'zh' ? '自愿质押入驻成为承兑商 (zkTLS)' : 'Verify & Register (zkTLS)'}
+                </button>
+              )}
             </div>
           ) : (
             <button onClick={connectWallet} className="btn-primary" style={{ padding: '8px 16px', marginTop: '10px' }}>
@@ -1189,10 +1277,10 @@ export function MerchantPanel({
                           {provingStatus === 'idle' && (
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                               <p style={{ margin: 0, fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                                {lang === 'zh' ? '转账给买家后，点击“Mock 模拟演示”或使用 zkTLS 提取 Wise 账单进行自动合约清算。' : 'After transferring fiat to the buyer, click below to verify and settle.'}
+                                {lang === 'zh' ? '向买家网银账号付款后，点击下方按钮唤醒 zkTLS。系统将拉取 Wise/支付宝 出账流水并生成付款证明进行自动清算放款。' : 'Transfer fiat to the buyer\'s account, then click below to invoke zkTLS. We will fetch your Wise/Alipay payout statement to verify and settle.'}
                               </p>
-                              <button onClick={() => handleMerchantSettleFiatOrder(o, true)} className="btn-primary" style={{ padding: '8px', fontSize: '0.8rem' }}>
-                                {lang === 'zh' ? 'Mock 模拟演示清算' : 'Mock Settle'}
+                              <button onClick={() => handleMerchantSettleFiatOrder(o)} className="btn-primary" style={{ padding: '8px', fontSize: '0.8rem' }}>
+                                {lang === 'zh' ? '真实 zkTLS 清算放款' : 'Verify & Settle with zkTLS'}
                               </button>
                             </div>
                           )}
