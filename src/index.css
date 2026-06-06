@@ -604,3 +604,7 @@ body.light-mode .agent-thought-icon {
   0%, 100% { box-shadow: 0 0 5px rgba(99, 102, 241, 0.2); }
   50% { box-shadow: 0 0 15px rgba(99, 102, 241, 0.5); }
 }
+
+.step-badge-circle {
+  color: #ffffff !important;
+}
