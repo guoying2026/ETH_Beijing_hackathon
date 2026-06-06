@@ -309,8 +309,14 @@ export function FxIntelPanel({
     if (!history || history.length === 0) return null;
 
     const width = 500;
-    const height = 180;
-    const padding = 20;
+    const height = 210; // 增加高度以容纳 X 轴标签空间
+    const paddingLeft = 55;
+    const paddingRight = 15;
+    const paddingTop = 20;
+    const paddingBottom = 30;
+
+    const chartWidth = width - paddingLeft - paddingRight;
+    const chartHeight = height - paddingTop - paddingBottom;
 
     const rates = history.map((h) => h.rate);
     const max = Math.max(...rates);
@@ -319,14 +325,50 @@ export function FxIntelPanel({
 
     // 缩放坐标点
     const points = history.map((h, i) => {
-      const x = padding + (i / (history.length - 1)) * (width - padding * 2);
-      const y = height - padding - ((h.rate - min) / range) * (height - padding * 2);
+      const x = paddingLeft + (i / (history.length - 1)) * chartWidth;
+      const y = paddingTop + chartHeight - ((h.rate - min) / range) * chartHeight;
       return { x, y, rate: h.rate, date: h.date };
     });
 
     const pathD = `M ${points.map((p) => `${p.x} ${p.y}`).join(' L ')}`;
     // 创建渐变填充区域的闭合路径
-    const areaD = `${pathD} L ${points[points.length - 1].x} ${height - padding} L ${points[0].x} ${height - padding} Z`;
+    const areaD = `${pathD} L ${points[points.length - 1].x} ${paddingTop + chartHeight} L ${points[0].x} ${paddingTop + chartHeight} Z`;
+
+    // 格式化日期，只保留月-日 (如 "05-18")
+    const formatLabelDate = (dateStr: string) => {
+      if (!dateStr) return '';
+      const parts = dateStr.split('-');
+      if (parts.length >= 3) {
+        return `${parts[1]}-${parts[2]}`; // MM-DD
+      }
+      return dateStr;
+    };
+
+    // 选取 5 个 X 轴刻度点展示日期
+    const xTicksIndices: number[] = [];
+    const len = points.length;
+    if (len > 0) {
+      if (len <= 5) {
+        for (let i = 0; i < len; i++) xTicksIndices.push(i);
+      } else {
+        xTicksIndices.push(0);
+        xTicksIndices.push(Math.floor(len * 0.25));
+        xTicksIndices.push(Math.floor(len * 0.5));
+        xTicksIndices.push(Math.floor(len * 0.75));
+        xTicksIndices.push(len - 1);
+      }
+    }
+
+    // 4 个 Y 轴刻度对应的值和 y 坐标
+    const yTicks = [
+      { value: max, y: paddingTop },
+      { value: max - range * 0.3333, y: paddingTop + chartHeight * 0.3333 },
+      { value: max - range * 0.6667, y: paddingTop + chartHeight * 0.6667 },
+      { value: min, y: paddingTop + chartHeight }
+    ];
+
+    // 获取当前悬停点对应的坐标
+    const activePoint = hoveredPoint !== null && hoveredPoint.index < points.length ? points[hoveredPoint.index] : null;
 
     return (
       <div style={{ position: 'relative' }}>
@@ -343,10 +385,59 @@ export function FxIntelPanel({
             </linearGradient>
           </defs>
 
-          {/* 网格背景线 */}
-          <line x1={padding} y1={padding} x2={width - padding} y2={padding} stroke="rgba(255,255,255,0.03)" />
-          <line x1={padding} y1={height / 2} x2={width - padding} y2={height / 2} stroke="rgba(255,255,255,0.03)" />
-          <line x1={padding} y1={height - padding} x2={width - padding} y2={height - padding} stroke="rgba(255,255,255,0.05)" />
+          {/* 网格背景横线及 Y 轴刻度 */}
+          {yTicks.map((tick, index) => (
+            <g key={`y-tick-${index}`}>
+              {/* 网格横线 */}
+              <line
+                x1={paddingLeft}
+                y1={tick.y}
+                x2={width - paddingRight}
+                y2={tick.y}
+                stroke={index === yTicks.length - 1 ? "rgba(255,255,255,0.08)" : "rgba(255,255,255,0.03)"}
+                strokeDasharray={index === yTicks.length - 1 ? "none" : "3 3"}
+              />
+              {/* Y 轴文字 */}
+              <text
+                x={paddingLeft - 8}
+                y={tick.y + 3}
+                fill="var(--text-muted)"
+                fontSize="9"
+                fontFamily="monospace"
+                textAnchor="end"
+              >
+                {tick.value.toFixed(4)}
+              </text>
+            </g>
+          ))}
+
+          {/* X 轴竖向刻度小短线和日期标签 */}
+          {xTicksIndices.map((idx) => {
+            const p = points[idx];
+            if (!p) return null;
+            return (
+              <g key={`x-tick-${idx}`}>
+                {/* 刻度小短线 */}
+                <line
+                  x1={p.x}
+                  y1={paddingTop + chartHeight}
+                  x2={p.x}
+                  y2={paddingTop + chartHeight + 4}
+                  stroke="rgba(255,255,255,0.15)"
+                />
+                {/* 日期文字 */}
+                <text
+                  x={p.x}
+                  y={paddingTop + chartHeight + 16}
+                  fill="var(--text-muted)"
+                  fontSize="9"
+                  textAnchor="middle"
+                >
+                  {formatLabelDate(p.date)}
+                </text>
+              </g>
+            );
+          })}
 
           {/* 渐变填充 */}
           <path d={areaD} fill="url(#chartGlow)" />
@@ -354,13 +445,33 @@ export function FxIntelPanel({
           {/* 折线 */}
           <path d={pathD} fill="none" stroke="url(#lineGrad)" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
 
-          {/* 刻度标注 */}
-          <text x={width - padding} y={padding - 5} fill="var(--text-muted)" fontSize="9" textAnchor="end">
-            MAX: {max.toFixed(4)}
-          </text>
-          <text x={width - padding} y={height - padding + 12} fill="var(--text-muted)" fontSize="9" textAnchor="end">
-            MIN: {min.toFixed(4)}
-          </text>
+          {/* Hover 时的十字指示辅助线 */}
+          {activePoint && (
+            <g>
+              {/* 垂直指示线 */}
+              <line
+                x1={activePoint.x}
+                y1={paddingTop}
+                x2={activePoint.x}
+                y2={paddingTop + chartHeight}
+                stroke="rgba(99, 102, 241, 0.4)"
+                strokeWidth="1.5"
+                strokeDasharray="3 3"
+                style={{ pointerEvents: 'none' }}
+              />
+              {/* 水平指示线 */}
+              <line
+                x1={paddingLeft}
+                y1={activePoint.y}
+                x2={width - paddingRight}
+                y2={activePoint.y}
+                stroke="rgba(99, 102, 241, 0.4)"
+                strokeWidth="1.5"
+                strokeDasharray="3 3"
+                style={{ pointerEvents: 'none' }}
+              />
+            </g>
+          )}
 
           {/* 数据点交互 */}
           {points.map((p, i) => (
