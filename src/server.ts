@@ -4,6 +4,7 @@ import dotenv from 'dotenv';
 import { GoogleGenerativeAI, SchemaType } from '@google/generative-ai';
 import { pool } from './db.js';
 import { syncPolymarketData } from './sync.js';
+import { syncFxHistory } from './sync_fx.js';
 
 // 安全提取并解析 AI 返回的 JSON 字符串的辅助工具
 function extractJson(text: string): any {
@@ -123,24 +124,7 @@ async function fetchExchangeRates() {
   }
 }
 
-// 模拟 30 天的历史走势数据点（基于实时汇率进行小幅度布朗运动波动）
-function generateHistory(rate: number) {
-  const history = [];
-  const now = new Date();
-  let currentRate = rate;
 
-  for (let i = 30; i >= 0; i--) {
-    const date = new Date(now.getTime() - i * 24 * 60 * 60 * 1000);
-    // 随机浮动 (-0.3% 到 +0.3%)
-    const change = (Math.random() - 0.5) * 0.006 * currentRate;
-    currentRate += change;
-    history.push({
-      date: date.toISOString().split('T')[0],
-      rate: Number(currentRate.toFixed(4)),
-    });
-  }
-  return history;
-}
 
 // 从 Frankfurter API 获取真实的 30 天历史汇率
 async function fetchRealHistory(base: string, quote: string): Promise<Array<{ date: string; rate: number }>> {
@@ -329,12 +313,12 @@ app.get('/api/fx-intel', async (req, res) => {
     totalCostFactor = baseSpread + slippage;
     effectiveRate = currentRate * (1 - totalCostFactor);
 
-    // 2. 生成历史走势（优先从真实的 API 获取，如果失败再降级使用布朗运动模拟）
-    const realHistory = await fetchRealHistory(base, quote);
-    if (realHistory && realHistory.length > 0) {
-      history = realHistory;
+    // 2. 从物理数据表 fx_history 中直接读取 30 天真实历史走势（不要任何模拟，如无数据则抛错）
+    const historyRes = await pool.query('SELECT history_data FROM fx_history WHERE pair = $1', [`${base}/${quote}`]);
+    if (historyRes.rows && historyRes.rows.length > 0) {
+      history = historyRes.rows[0].history_data;
     } else {
-      history = generateHistory(currentRate);
+      throw new Error(`No historical data found in database for pair ${base}/${quote}`);
     }
 
     // 3. 计算 7d 和 30d 的变化率以及波动率特征
@@ -598,20 +582,13 @@ app.get('/api/fx-intel', async (req, res) => {
     const isZh = lang === 'zh';
     const pair = `${base}/${quote}`;
 
-    // 如果第一步网络不通，这里做硬编码兜底
-    if (currentRate === 1) {
-      const rateMap: Record<string, number> = {
-        'USD/CNY': 7.285,
-        'USD/MYR': 4.712,
-        'CNY/MYR': 0.647
-      };
-      currentRate = rateMap[pair] || 1;
-      effectiveRate = Number((currentRate * 0.997).toFixed(4));
-      totalCostFactor = 0.003;
-      history = generateHistory(currentRate);
-      change7d = 0.45;
-      change30d = -1.2;
-    }
+    // 从数据库获取真实的汇率历史
+    try {
+      const historyRes = await pool.query('SELECT history_data FROM fx_history WHERE pair = $1', [pair]);
+      if (historyRes.rows && historyRes.rows.length > 0) {
+        history = historyRes.rows[0].history_data;
+      }
+    } catch (_) {}
 
     const finalRag = ragEvents;
 
@@ -696,18 +673,64 @@ app.post('/api/save-memory', async (req, res) => {
   }
 });
 
+// 强制刷新历史汇率接口：从 Frankfurter 重新拉取并存入数据库，然后返回新历史数据
+app.post('/api/refresh-fx-history', async (req, res) => {
+  const base = (req.body.base || 'USD').toUpperCase();
+  const quote = (req.body.quote || 'CNY').toUpperCase();
+  const pair = `${base}/${quote}`;
+  console.log(`🔄 Force refreshing history data for ${pair} from Frankfurter API...`);
+
+  try {
+    const historyData = await fetchRealHistory(base, quote);
+    if (historyData.length === 0) {
+      throw new Error(`Failed to fetch real history data from Frankfurter for pair ${pair}`);
+    }
+
+    await pool.query(
+      `INSERT INTO fx_history (pair, history_data, updated_at)
+       VALUES ($1, $2, CURRENT_TIMESTAMP)
+       ON CONFLICT (pair) DO UPDATE SET
+         history_data = EXCLUDED.history_data,
+         updated_at = CURRENT_TIMESTAMP`,
+      [pair, JSON.stringify(historyData)]
+    );
+
+    console.log(`   ✅ DB successfully updated with refreshed history data for ${pair}.`);
+    res.json({ success: true, history: historyData });
+  } catch (error) {
+    console.error(`❌ Force refresh history failed for ${pair}:`, error);
+    res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
 // 服务启动
 app.listen(PORT, async () => {
   console.log(`🚀 Node.js Backend API Server is running on http://localhost:${PORT}`);
 
-  // 在服务器启动时，自动在后台异步触发一次数据库同步（拉取 Polymarket 赔率并生成向量存库）
-  // 这样做可以让用户一键跑通，无需手动输入同步命令
   try {
-    console.log('🔄 Triggering auto-sync on startup...');
+    console.log('🔄 Triggering startup sync tasks...');
+    
+    // 1. 自动同步历史汇率并注册定时器
+    syncFxHistory()
+      .then(() => {
+        console.log('✅ Startup history rate sync completed.');
+        console.log('⏱️ Registering 10-minute scheduler for history rate sync...');
+        setInterval(async () => {
+          console.log('⏱️ Running scheduled history rate sync...');
+          try {
+            await syncFxHistory();
+          } catch (e) {
+            console.error('❌ Scheduled history rate sync failed:', e);
+          }
+        }, 10 * 60 * 1000);
+      })
+      .catch(err => console.error('⚠️ Startup history rate sync error:', err));
+
+    // 2. 自动同步 Polymarket 赔率数据
     syncPolymarketData()
-      .then(() => console.log('✅ Startup auto-sync completed.'))
-      .catch(err => console.error('⚠️ Startup auto-sync error:', err));
+      .then(() => console.log('✅ Startup Polymarket auto-sync completed.'))
+      .catch(err => console.error('⚠️ Startup Polymarket auto-sync error:', err));
   } catch (e) {
-    console.error('⚠️ Failed to queue auto-sync on startup:', e);
+    console.error('⚠️ Failed to queue startup sync tasks:', e);
   }
 });

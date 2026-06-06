@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Sparkles, TrendingUp, TrendingDown, Clock, AlertTriangle, Activity, DollarSign, Award, HelpCircle, Cpu } from 'lucide-react';
+import { Sparkles, TrendingUp, TrendingDown, Clock, AlertTriangle, Activity, DollarSign, Award, HelpCircle, Cpu, RefreshCw } from 'lucide-react';
 
 interface Driver {
   title: string;
@@ -160,6 +160,30 @@ export function FxIntelPanel({
   const [countdown, setCountdown] = useState<number>(300);
   const [isTimerActive, setIsTimerActive] = useState<boolean>(true);
   const [realtimeData, setRealtimeData] = useState<Record<string, { loading: boolean; data?: any[]; error?: boolean }>>({});
+  const [isRefreshingHistory, setIsRefreshingHistory] = useState(false);
+
+  const handleRefreshHistory = async () => {
+    if (isRefreshingHistory || !data) return;
+    setIsRefreshingHistory(true);
+    const [base, quote] = pair.split('/');
+    try {
+      const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+      const res = await fetch(`${apiUrl}/api/refresh-fx-history`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ base, quote })
+      });
+      if (!res.ok) throw new Error('Failed to refresh');
+      const json = await res.json();
+      if (json.success && json.history) {
+        setData(prev => prev ? { ...prev, history: json.history } : null);
+      }
+    } catch (err) {
+      console.error('Refresh history error:', err);
+    } finally {
+      setIsRefreshingHistory(false);
+    }
+  };
 
   const handleMouseEnter = async (slug: string) => {
     if (!slug) return;
@@ -722,7 +746,46 @@ export function FxIntelPanel({
       {data && (
         <div>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem', alignItems: 'center' }}>
-            <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)', fontWeight: 600 }}>{t.trendTitle}</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)', fontWeight: 600 }}>{t.trendTitle}</span>
+              <button
+                onClick={handleRefreshHistory}
+                disabled={isRefreshingHistory}
+                style={{
+                  background: 'rgba(255,255,255,0.04)',
+                  border: '1px solid rgba(255,255,255,0.08)',
+                  borderRadius: '4px',
+                  padding: '3px 6px',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '4px',
+                  cursor: isRefreshingHistory ? 'not-allowed' : 'pointer',
+                  color: 'var(--text-muted)',
+                  fontSize: '0.7rem',
+                  transition: 'all 0.2s',
+                }}
+                title={lang === 'zh' ? '从 API 重新抓取并更新本地历史数据表' : 'Re-fetch and update local history table from API'}
+                onMouseEnter={(e) => {
+                  if (!isRefreshingHistory) {
+                    e.currentTarget.style.background = 'rgba(255,255,255,0.1)';
+                    e.currentTarget.style.color = 'var(--text-primary)';
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = 'rgba(255,255,255,0.04)';
+                  e.currentTarget.style.color = 'var(--text-muted)';
+                }}
+              >
+                <RefreshCw 
+                  size={10} 
+                  className={isRefreshingHistory ? 'spin-animation' : ''} 
+                  style={{ animation: isRefreshingHistory ? 'spin 1.5s linear infinite' : 'none' }}
+                />
+                {isRefreshingHistory 
+                  ? (lang === 'zh' ? '正在刷新...' : 'Refreshing...') 
+                  : (lang === 'zh' ? '刷新历史' : 'Refresh')}
+              </button>
+            </div>
             <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{t.hoverTip}</span>
           </div>
           {renderChart(data.history)}

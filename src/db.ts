@@ -43,7 +43,16 @@ export async function initDatabase() {
       ALTER TABLE polymarket_events ADD COLUMN IF NOT EXISTS slug VARCHAR(255);
     `);
 
-    console.log('✅ Table "polymarket_events" is ready.');
+    // 3. 创建历史汇率存储表
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS fx_history (
+        pair VARCHAR(20) PRIMARY KEY,
+        history_data JSONB NOT NULL,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    console.log('✅ Tables are ready.');
   } catch (error) {
     console.error('❌ Database initialization failed:', error);
     throw error;
