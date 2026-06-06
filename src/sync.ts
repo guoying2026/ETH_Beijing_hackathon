@@ -10,7 +10,7 @@ const BASE_URL = 'https://gamma-api.polymarket.com/events';
 
 const IGNORE_TAG_SLUGS = [
   'up-or-down', '15m', '5m', 'recurring', 'daily', 'intraday',
-  'sports', 'nba', 'nfl', 'tennis', 'mma', 'baseball',
+  'sports', 'nba', 'nfl', 'tennis', 'mma', 'baseball', 'pop-culture', 'entertainment'
 ];
 
 const IGNORE_KEYWORDS = [
@@ -38,16 +38,22 @@ function shouldSkip(event: any): boolean {
     }
   }
 
-  // 3. 正向匹配白名单：标题必须包含至少一个跟宏观金融、利率、关税、中美大选等强相关的核心词
-  const MACRO_KEYWORDS = [
-    'fed', 'powell', 'rate', 'tariff', 'inflation', 'recession', 
-    'china', 'cny', 'gdp', 'unemployment', 'economic', 'trade', 
-    'trump', 'harris', 'election', 'debt', 'treasury', 'bank', 
-    'eurozone', 'cpi', 'pce', 'jobs', 'currency', 'exchange'
-  ];
-
   const lowerTitle = title.toLowerCase();
-  const hasMacro = MACRO_KEYWORDS.some(kw => lowerTitle.includes(kw));
+
+  // 过滤掉地方选举、花边八卦、社交媒体帖子、体育娱乐等噪音
+  const ignoreRegex = /\b(house seat|senate seat|governor|mayoral|district|congress|representative|by-election|legislative|parliamentary|mayoral election|governor election|local election|truth social|truthposts|truth posts|truthsocial|truthpost|dance|dancing|danced|praise|praises|praised|flu|hospitalization|covid|charged|arrested|indicted|guilty|jail|prison|space|visit|visits|visited|poker|chess|sports|movie|movies|oscar|oscars|grammy|grammys|celebrity|mrbeast|tiktok|music|album|song|spotify|youtube|subscribers|views|stream|box office|opening weekend|approval rate|crime rate|hospitalization rate|mortality rate|suicide rate|golf|debate|debates|podcast|interview|interviews|rally|rallies|truth|approval)\b/i;
+
+  if (ignoreRegex.test(lowerTitle)) {
+    return true;
+  }
+
+  // 3. 正向匹配白名单：使用单词边界 \b 防止匹配到 federally, reference 等不相关词汇
+  const macroRegex = /\b(fed|fed's|powell|tariff|tariffs|inflation|recession|recessions|cny|gdp|unemployment|economic|trade|debt|treasury|eurozone|cpi|pce|currency|exchange|pboc|bnm|opr|yield|yields|interest rate|interest rates|rate cut|rate cuts|rate hike|rate hikes|policy rate|policy rates|unemployment rate|federal reserve|economic growth)\b/i;
+  
+  // 大选/关键政治人物相关，但必须是全国性总统大选级别，过滤掉地方选举和花边八卦
+  const presidentialRegex = /\b(trump|harris|biden|presidential election|us election)\b/i;
+
+  const hasMacro = macroRegex.test(lowerTitle) || presidentialRegex.test(lowerTitle);
   if (!hasMacro) {
     return true; // 不包含任何金融宏观核心词，跳过
   }
