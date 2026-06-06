@@ -46,7 +46,12 @@ export function App() {
   const [amount, setAmount] = useState('1000');
   const [horizon, setHorizon] = useState('3d');
   const [analysis, setAnalysis] = useState<any>(null);
-  const [theme, setTheme] = useState<'dark' | 'light'>('dark');
+  const [theme, setTheme] = useState<'dark' | 'light'>(() => {
+    if (typeof window !== 'undefined' && window.matchMedia) {
+      return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+    }
+    return 'dark';
+  });
   const [activeAI, setActiveAI] = useState<{ provider: string; model: string }>({ provider: 'gemini', model: 'gemini-2.5-flash' });
 
   // AI Agent States
@@ -72,6 +77,17 @@ export function App() {
       document.body.classList.remove('light-mode');
     }
   }, [theme]);
+
+  // 监听系统偏好色彩模式的变化
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return;
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: light)');
+    const handleChange = (e: MediaQueryListEvent) => {
+      setTheme(e.matches ? 'light' : 'dark');
+    };
+    mediaQuery.addEventListener('change', handleChange);
+    return () => mediaQuery.removeEventListener('change', handleChange);
+  }, []);
 
   // 监听 C2CTradeCard 通过 window 事件发送的 zkTLS 日志
   useEffect(() => {
