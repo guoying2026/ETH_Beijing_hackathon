@@ -4,7 +4,7 @@ import { C2CTradeCard } from './components/C2CTradeCard';
 import { DashboardPanel } from './components/DashboardPanel';
 import { MerchantPanel } from './components/MerchantPanel';
 import { AdminPanel } from './components/AdminPanel';
-import { Shield, HelpCircle, Languages, Sun, Moon, Bot, Terminal, X, User, Store, ShieldAlert, Wallet } from 'lucide-react';
+import { Shield, HelpCircle, Languages, Sun, Moon, Bot, Terminal, X, User, Store, ShieldAlert, Wallet, Download, AlertTriangle, CheckCircle2, ChevronDown, ChevronUp } from 'lucide-react';
 import { createPublicClient, http } from 'viem';
 import { hardhat, sepolia } from 'viem/chains';
 
@@ -66,6 +66,17 @@ export function App() {
   const [activeAI, setActiveAI] = useState<{ provider: string; model: string }>({ provider: 'gemini', model: 'gemini-2.5-flash' });
   const [appTab, setAppTab] = useState<'trade' | 'dashboard' | 'merchant' | 'admin'>('trade');
   const [account, setAccount] = useState<`0x${string}` | null>(null);
+  const [hasExtension, setHasExtension] = useState<boolean>(false);
+  const [showGuide, setShowGuide] = useState<boolean>(false);
+
+  useEffect(() => {
+    const check = () => {
+      setHasExtension(!!(window as any).tlsn);
+    };
+    check();
+    const interval = setInterval(check, 1000);
+    return () => clearInterval(interval);
+  }, []);
 
   const checkAndSwitchNetwork = async (ethereum: any) => {
     try {
@@ -377,6 +388,165 @@ export function App() {
           FX Intel Exchange Platform
         </h1>
       </header>
+
+      {/* zkTLS Extension Downloader & Guide Banner */}
+      <div 
+        style={{
+          width: '100%',
+          background: hasExtension ? 'rgba(16, 185, 129, 0.05)' : 'rgba(245, 158, 11, 0.08)',
+          border: hasExtension ? '1px solid rgba(16, 185, 129, 0.2)' : '1px solid rgba(245, 158, 11, 0.25)',
+          borderRadius: '12px',
+          padding: '12px 18px',
+          boxSizing: 'border-box',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '12px',
+          fontSize: '0.9rem',
+          transition: 'all 0.3s ease',
+          boxShadow: hasExtension ? '0 4px 20px rgba(16, 185, 129, 0.03)' : '0 4px 20px rgba(245, 158, 11, 0.05)',
+        }}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: hasExtension ? 'var(--success)' : 'var(--warning)' }}>
+            {hasExtension ? (
+              <CheckCircle2 size={18} color="var(--success)" style={{ flexShrink: 0 }} />
+            ) : (
+              <AlertTriangle size={18} color="var(--warning)" style={{ flexShrink: 0 }} />
+            )}
+            <span style={{ fontWeight: 600 }}>
+              {hasExtension ? (
+                lang === 'zh' ? '检测到 zkTLS 浏览器扩展插件已启用。已开启 MPC 安全计算，您可正常进行商户入驻或转账验证。' : 'zkTLS browser extension detected and active! Ready for MPC notary.'
+              ) : (
+                lang === 'zh' ? '未检测到 zkTLS 浏览器扩展插件！本系统使用零知识证明以确保交易真实性，请先下载并安装扩展插件。' : 'zkTLS browser extension not detected! This system requires the companion extension for zkTLS notary.'
+              )}
+            </span>
+          </div>
+
+          <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+            {!hasExtension && (
+              <a 
+                href="/zkTLS-extension.zip" 
+                download="zkTLS-extension.zip"
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)',
+                  color: 'white',
+                  textDecoration: 'none',
+                  padding: '6px 14px',
+                  borderRadius: '20px',
+                  fontSize: '0.8rem',
+                  fontWeight: 700,
+                  boxShadow: '0 4px 12px rgba(245, 158, 11, 0.3)',
+                  transition: 'transform 0.2s ease',
+                }}
+                onMouseEnter={(e) => e.currentTarget.style.transform = 'translateY(-1px)'}
+                onMouseLeave={(e) => e.currentTarget.style.transform = 'translateY(0)'}
+              >
+                <Download size={14} />
+                <span>{lang === 'zh' ? '📥 下载 zkTLS 扩展包 (ZIP)' : '📥 Download extension (ZIP)'}</span>
+              </a>
+            )}
+            
+            <button
+              onClick={() => setShowGuide(!showGuide)}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '4px',
+                background: 'rgba(255, 255, 255, 0.05)',
+                border: '1px solid rgba(255, 255, 255, 0.1)',
+                padding: '6px 12px',
+                borderRadius: '20px',
+                color: 'inherit',
+                cursor: 'pointer',
+                fontSize: '0.8rem',
+                fontWeight: 600,
+                transition: 'all 0.2s ease',
+              }}
+              onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255, 255, 255, 0.1)'}
+              onMouseLeave={(e) => e.currentTarget.style.background = 'rgba(255, 255, 255, 0.05)'}
+            >
+              <span>{lang === 'zh' ? '安装与配置指南' : 'Installation Guide'}</span>
+              {showGuide ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+            </button>
+          </div>
+        </div>
+
+        {showGuide && (
+          <div 
+            style={{
+              background: 'rgba(0, 0, 0, 0.2)',
+              borderRadius: '8px',
+              padding: '14px',
+              border: '1px solid rgba(255, 255, 255, 0.05)',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '12px',
+              lineHeight: '1.6',
+            }}
+          >
+            <div style={{ fontWeight: 700, fontSize: '0.95rem', borderBottom: '1px solid rgba(255, 255, 255, 0.08)', paddingBottom: '6px', color: 'var(--text-highlight)' }}>
+              {lang === 'zh' ? '🛠️ 极简手动安装说明' : '🛠️ Simple Manual Installation Instructions'}
+            </div>
+            
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '14px' }}>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <div style={{ width: '22px', height: '22px', borderRadius: '50%', background: 'var(--primary)', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '0.75rem', flexShrink: 0 }}>1</div>
+                <div>
+                  <div style={{ fontWeight: 600, fontSize: '0.85rem' }}>{lang === 'zh' ? '下载并解压' : 'Download & Extract'}</div>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                    {lang === 'zh' ? '点击上方的下载按钮，得到 zip 扩展包，并在本地进行解压。' : 'Click the download button above to get the zip extension and extract it locally.'}
+                  </div>
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <div style={{ width: '22px', height: '22px', borderRadius: '50%', background: 'var(--primary)', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '0.75rem', flexShrink: 0 }}>2</div>
+                <div>
+                  <div style={{ fontWeight: 600, fontSize: '0.85rem' }}>{lang === 'zh' ? '进入 Chrome 扩展管理' : 'Open Extensions Page'}</div>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                    {lang === 'zh' ? (
+                      <span>打开 Chrome 浏览器，访问 <a href="chrome://extensions/" target="_blank" rel="noreferrer" style={{ textDecoration: 'underline', color: 'var(--primary)', cursor: 'pointer' }}>chrome://extensions/</a>。</span>
+                    ) : (
+                      <span>Go to <a href="chrome://extensions/" target="_blank" rel="noreferrer" style={{ textDecoration: 'underline', color: 'var(--primary)', cursor: 'pointer' }}>chrome://extensions/</a> in your Chrome browser.</span>
+                    )}
+                  </div>
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <div style={{ width: '22px', height: '22px', borderRadius: '50%', background: 'var(--primary)', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '0.75rem', flexShrink: 0 }}>3</div>
+                <div>
+                  <div style={{ fontWeight: 600, fontSize: '0.85rem' }}>{lang === 'zh' ? '启用“开发者模式”' : 'Enable Developer Mode'}</div>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                    {lang === 'zh' ? '在扩展管理页面右上角，将“开发者模式”开关打开。' : 'In the upper-right corner of the page, switch the "Developer mode" toggle on.'}
+                  </div>
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <div style={{ width: '22px', height: '22px', borderRadius: '50%', background: 'var(--primary)', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '0.75rem', flexShrink: 0 }}>4</div>
+                <div>
+                  <div style={{ fontWeight: 600, fontSize: '0.85rem' }}>{lang === 'zh' ? '加载解压的扩展程序' : 'Load Unpacked'}</div>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                    {lang === 'zh' ? '点击左上角的“加载已解压的扩展程序”按钮，选择您第1步中解压好的文件夹。' : 'Click "Load unpacked" on the top left and select the folder extracted in Step 1.'}
+                  </div>
+                </div>
+              </div>
+            </div>
+            
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'rgba(99, 102, 241, 0.05)', border: '1px solid rgba(99, 102, 241, 0.1)', padding: '8px 12px', borderRadius: '6px', fontSize: '0.8rem', color: 'var(--text-highlight)' }}>
+              <HelpCircle size={14} style={{ flexShrink: 0 }} />
+              <span>
+                {lang === 'zh' ? (
+                  <span><b>网络提示</b>：若您当前使用的是 ngrok 外网代理域名访问此页面，下载链接将直接通过外网分发。安装扩展并登录网银/支付宝即可在本地与 Rust 验证服务交互并签名上链。</span>
+                ) : (
+                  <span><b>Network Note</b>: If accessing via ngrok, the download works seamlessly. Once installed, the extension connects to local verifier to generate proof for on-chain registry.</span>
+                )}
+              </span>
+            </div>
+          </div>
+        )}
+      </div>
 
       {/* 导航 Tab 切换栏 */}
       <nav style={{

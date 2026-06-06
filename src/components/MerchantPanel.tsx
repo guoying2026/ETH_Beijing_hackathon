@@ -391,7 +391,7 @@ export function MerchantPanel({
 
       // 2. Real zkTLS Registration Verification
       if (!(window as any).tlsn) {
-        throw new Error(lang === 'zh' ? '未检测到 zkTLS 浏览器插件！请先安装并启用 tlsn-extension。' : 'zkTLS extension not detected! Please install and enable tlsn-extension first.');
+        throw new Error(lang === 'zh' ? '未检测到 zkTLS 浏览器插件！请先在页面顶部下载并安装，或获取此处压缩包并在 Chrome 开发者模式中加载：/zkTLS-extension.zip' : 'zkTLS extension not detected! Please download from page top or get the zip directly and load unpacked in Chrome Developer mode: /zkTLS-extension.zip');
       }
 
       setProveProgress(40);
