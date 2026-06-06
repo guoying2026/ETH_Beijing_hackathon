@@ -1,6 +1,29 @@
 import { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { Landmark, ArrowRight, ShieldCheck, CheckCircle, RotateCw, AlertCircle, RefreshCw, X, ExternalLink } from 'lucide-react';
+import { createPublicClient, createWalletClient, custom, http, formatUnits, parseUnits, keccak256, stringToBytes, encodePacked, parseEventLogs } from 'viem';
+import { hardhat, sepolia } from 'viem/chains';
+import { C2C_ADMIN_ABI, C2C_ESCROW_ABI, C2C_RISK_MANAGER_ABI, ERC20_ABI } from '../lib/contractAbi';
+
+const getEthereum = () => typeof window !== 'undefined' ? (window as any).ethereum : undefined;
+
+
+const ADMIN_ADDRESS = (import.meta.env.VITE_C2C_ADMIN_ADDRESS || '').toLowerCase() as `0x${string}`;
+const ESCROW_ADDRESS = (import.meta.env.VITE_C2C_ESCROW_ADDRESS || '').toLowerCase() as `0x${string}`;
+const RISK_MANAGER_ADDRESS = (import.meta.env.VITE_C2C_RISK_MANAGER_ADDRESS || '').toLowerCase() as `0x${string}`;
+const BOND_VAULT_ADDRESS = (import.meta.env.VITE_C2C_BOND_VAULT_ADDRESS || '').toLowerCase() as `0x${string}`;
+const USDT_ADDRESS = (import.meta.env.VITE_USDT_ADDRESS || '').toLowerCase() as `0x${string}`;
+const MERCHANT_ADDRESS = (import.meta.env.VITE_MERCHANT_ADDRESS || '').toLowerCase() as `0x${string}`;
+
+const CHAIN_ID = Number(import.meta.env.VITE_CHAIN_ID || '11155111');
+const targetChain = CHAIN_ID === 11155111 ? sepolia : hardhat;
+const targetRpcUrl = import.meta.env.VITE_RPC_URL || 'https://rpc.ankr.com/eth_sepolia';
+
+const publicClient = createPublicClient({
+  chain: targetChain,
+  transport: http(targetRpcUrl)
+});
+
 
 interface Props {
   currentRate: number;
@@ -9,6 +32,8 @@ interface Props {
   amount: string;
   setAmount: (amt: string) => void;
   analysis: any;
+  account: `0x${string}` | null;
+  connectWallet: () => Promise<void>;
 }
 
 type Tab = 'express' | 'p2p';
@@ -49,7 +74,7 @@ const T = {
     backOrder: '返回转账订单页',
     errNoExtension: '未检测到 TLSNotary 浏览器扩展！请先按照页面顶部指示在 Chrome 中安装扩展，或点击下方“Mock 演示”免插件体验。',
     errPluginCode: '无法读取内置的瑞士银行插件代码。',
-    errVerificationFail: '证明生成失败，请确认您已运行本地的 7047 验证器和 3000 模拟银行，并在弹窗中成功生成了证明。',
+    errVerificationFail: '证明生成失败，请确认您已运行本地的 7047 验证器 and 3000 模拟银行，并在弹窗中成功生成了证明。',
     initMessage: '初始化托管合约，请在承兑商网银完成 1,000 USD 的模拟汇款。',
     msgConnecting: '🔐 正在与瑞士网银建立加密 TLS 连接...',
     msgProving: '⚡ 正在生成 zkTLS 密码学转账凭证...',
@@ -109,7 +134,7 @@ const T = {
   }
 };
 
-export function C2CTradeCard({ currentRate, pair, lang, amount, setAmount, analysis }: Props) {
+export function C2CTradeCard({ currentRate, pair, lang, amount, setAmount, analysis, account, connectWallet }: Props) {
   const [activeTab, setActiveTab] = useState<Tab>('express');
   const [step, setStep] = useState<TradeStep>('input');
   const [showDecisionModal, setShowDecisionModal] = useState(false);
@@ -186,6 +211,197 @@ export function C2CTradeCard({ currentRate, pair, lang, amount, setAmount, analy
 
   const [base, quote] = pair.split('/');
 
+  // Web3 state
+  const [ethBalance, setEthBalance] = useState<string>('0');
+  const [usdtBalance, setUsdtBalance] = useState<string>('0');
+  const [requiredBondBps, setRequiredBondBps] = useState<number>(1000); // 默认 10%
+  const [riskLevel, setRiskLevel] = useState<number>(0);
+  const [isFrozen, setIsFrozen] = useState<boolean>(false);
+  const [contractProducts, setContractProducts] = useState<any[]>([]);
+  const [selectedProduct, setSelectedProduct] = useState<any>(null);
+
+
+  const checkAndSwitchNetwork = async () => {
+    const ethereum = getEthereum();
+    if (typeof ethereum !== 'undefined') {
+      const chainId = await ethereum.request({ method: 'eth_chainId' });
+      const targetChainIdHex = CHAIN_ID === 11155111 ? '0xaa36a7' : '0x7a69';
+      if (chainId !== targetChainIdHex) {
+        try {
+          await ethereum.request({
+            method: 'wallet_switchEthereumChain',
+            params: [{ chainId: targetChainIdHex }],
+          });
+        } catch (switchError: any) {
+          if (switchError.code === 4902) {
+            try {
+              if (CHAIN_ID === 11155111) {
+                await ethereum.request({
+                  method: 'wallet_addEthereumChain',
+                  params: [{
+                    chainId: '0xaa36a7',
+                    chainName: 'Sepolia Testnet',
+                    nativeCurrency: { name: 'SepoliaETH', symbol: 'SepoliaETH', decimals: 18 },
+                    rpcUrls: [targetRpcUrl],
+                  }],
+                });
+              } else {
+                await ethereum.request({
+                  method: 'wallet_addEthereumChain',
+                  params: [{
+                    chainId: '0x7a69',
+                    chainName: 'Localhost 8545',
+                    nativeCurrency: { name: 'ETH', symbol: 'ETH', decimals: 18 },
+                    rpcUrls: ['http://localhost:8545'],
+                  }],
+                });
+              }
+            } catch (addError) {
+              console.error(addError);
+            }
+          } else {
+            console.error(switchError);
+          }
+        }
+      }
+    }
+  };
+
+
+
+  // Fetch balances & reputation
+  useEffect(() => {
+    if (!account) return;
+
+    const fetchUserData = async () => {
+      try {
+        const ethBal = await publicClient.getBalance({ address: account });
+        setEthBalance(formatUnits(ethBal, 18));
+
+        const usdtBal = await publicClient.readContract({
+          address: USDT_ADDRESS,
+          abi: ERC20_ABI,
+          functionName: 'balanceOf',
+          args: [account],
+        }) as bigint;
+        setUsdtBalance(formatUnits(usdtBal, 18));
+
+        const rep = await publicClient.readContract({
+          address: RISK_MANAGER_ADDRESS,
+          abi: C2C_RISK_MANAGER_ABI,
+          functionName: 'getReputation',
+          args: [account],
+        }) as any;
+        
+        const bps = await publicClient.readContract({
+          address: RISK_MANAGER_ADDRESS,
+          abi: C2C_RISK_MANAGER_ABI,
+          functionName: 'requiredBondBps',
+          args: [account],
+        }) as number;
+
+        setRequiredBondBps(bps);
+        setRiskLevel(rep.riskLevel ?? rep[4]);
+        setIsFrozen(Boolean((rep.temporarilyFrozen ?? rep[5]) || (rep.blacklisted ?? rep[6])));
+      } catch (err) {
+        console.error('Error fetching user on-chain data:', err);
+      }
+    };
+
+    fetchUserData();
+    const interval = setInterval(fetchUserData, 5000);
+    return () => clearInterval(interval);
+  }, [account]);
+
+  // Load contract products
+  const loadContractProducts = async () => {
+    try {
+      const fetched = [];
+      for (const pId of [0n, 1n]) {
+        // 去掉内部的 try-catch，让任何查询错误直接向外抛出
+        const prodInfo = await publicClient.readContract({
+          address: ESCROW_ADDRESS,
+          abi: C2C_ESCROW_ABI,
+          functionName: 'getProductInfo',
+          args: [MERCHANT_ADDRESS, pId, 0],
+        }) as any;
+
+        const rateInfo = await publicClient.readContract({
+          address: ADMIN_ADDRESS,
+          abi: C2C_ADMIN_ABI,
+          functionName: 'getMerchantRate',
+          args: [MERCHANT_ADDRESS, pId, 0],
+        }) as any;
+
+        const isOpen = await publicClient.readContract({
+          address: ADMIN_ADDRESS,
+          abi: C2C_ADMIN_ABI,
+          functionName: 'isMerchantOpen',
+          args: [MERCHANT_ADDRESS, pId, 0],
+        }) as boolean;
+
+        const platformId = (prodInfo.platformId ?? prodInfo[4]) as `0x${string}`;
+        let platformName = 'Unknown';
+        const platformIdLower = platformId.toLowerCase();
+        const wiseId = keccak256(stringToBytes('wise')).toLowerCase();
+        const alipayId = keccak256(stringToBytes('alipay')).toLowerCase();
+
+        if (platformIdLower === wiseId) {
+          platformName = 'Wise';
+        } else if (platformIdLower === alipayId) {
+          platformName = 'Alipay';
+        }
+
+        const rateVal = Number(rateInfo.rate ?? rateInfo[0]) / 1e8;
+
+        fetched.push({
+          productId: pId,
+          platformId,
+          platformName,
+          rate: rateVal,
+          rateVersion: rateInfo.version ?? rateInfo[1],
+          availableAmount: prodInfo.availableAmount ?? prodInfo[7],
+          isOpen
+        });
+      }
+      setContractProducts(fetched);
+    } catch (err) {
+      console.error('Failed to load contract products from chain:', err);
+      setContractProducts([]);
+      // 抛出异常，不再掩盖
+      throw err;
+    }
+  };
+
+  useEffect(() => {
+    loadContractProducts().catch(err => {
+      console.error('Failed to fetch chain products in useEffect:', err);
+    });
+    // Removed 10s high-frequency interval polling to prevent RPC throttling and verbose console errors
+  }, [pair]);
+
+  // Construct resolved P2P merchants list using contract data (no mock fallback)
+  const resolvedP2pMerchants = contractProducts.map((p) => {
+    const limitMax = Number(formatUnits(p.availableAmount, 18)).toFixed(0);
+    const name = p.platformName === 'Alipay'
+      ? (lang === 'zh' ? '支付宝承兑商 (Alipay)' : 'Alipay Merchant')
+      : (lang === 'zh' ? 'Wise承兑商 (Wise)' : 'Wise Merchant');
+    return {
+      name,
+      platformName: p.platformName,
+      productId: p.productId,
+      rate: p.rate,
+      limit: `0 - ${limitMax}`,
+      orders: 1845,
+      completion: '99.8%',
+      isOpen: p.isOpen,
+      platformId: p.platformId
+    };
+  });
+
+  // 直接使用从链上成功读取到的商户列表，不带 mock 兜底
+  const p2pMerchants = resolvedP2pMerchants;
+
   // 动态更新初始消息
   useEffect(() => {
     if (step === 'input') {
@@ -203,15 +419,32 @@ export function C2CTradeCard({ currentRate, pair, lang, amount, setAmount, analy
     }
   }, [sendAmount, currentRate, pair]);
 
-  // 虚拟 P2P 承兑商列表
-  const p2pMerchants = [
-    { name: lang === 'zh' ? '闪电兑换 (FastSwap)' : 'FastSwap', rate: currentRate * 1.002, limit: '100 - 5000', orders: 1845, completion: '99.8%' },
-    { name: lang === 'zh' ? '绿洲资产 (Oasis Capital)' : 'Oasis Capital', rate: currentRate * 0.998, limit: '500 - 10000', orders: 3241, completion: '99.5%' },
-    { name: lang === 'zh' ? '全球通汇 (GlobalPay)' : 'GlobalPay', rate: currentRate * 0.995, limit: '1000 - 50000', orders: 843, completion: '98.9%' }
-  ];
-
   // 开启清算流程
   const handleInitiateTrade = () => {
+    let prod = contractProducts.find(p => p.platformName.toLowerCase() === (pair.includes('CNY') ? 'alipay' : 'wise'));
+    if (!prod && contractProducts.length > 0) {
+      prod = contractProducts[0];
+    }
+    
+    // 如果没有可用的链上交易产品，直接拦截报错
+    if (!prod) {
+      const errText = lang === 'zh' 
+        ? '合约中未找到可用的交易产品，请确认合约已成功部署并已上架商品！' 
+        : 'No available products found on the contract. Please ensure deployment and listing are complete.';
+      console.error(errText);
+      setErrorMsg(errText);
+      setStep('error');
+      return;
+    }
+    
+    const resolvedProduct = {
+      platformName: prod.platformName,
+      productId: prod.productId,
+      platformId: prod.platformId,
+      rate: prod.rate
+    };
+
+    setSelectedProduct(resolvedProduct);
     setStep('pay');
     setErrorMsg('');
     setProveProgress(0);
@@ -256,7 +489,7 @@ export function C2CTradeCard({ currentRate, pair, lang, amount, setAmount, analy
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            content: `用户 guoying_dev 在即期汇率 1 ${base} = ${currentRate.toFixed(4)} ${quote} 时，成功通过 zkTLS 零知识证明锁定并结算了金额为 ${sendAmount} ${base} 的 C2C 汇率合约交易。`,
+            content: `用户 EOA ${account} 在即期汇率 1 ${base} = ${currentRate.toFixed(4)} ${quote} 时，成功通过 zkTLS 零知识证明锁定并结算了金额为 ${sendAmount} ${base} 的 C2C 汇率合约交易。`,
             userId: 'guoying_dev'
           })
         });
@@ -296,44 +529,331 @@ export function C2CTradeCard({ currentRate, pair, lang, amount, setAmount, analy
     }
 
     logToAgent('🔐 准备启动真实的 zkTLS 公证证明流程...');
-    if (!(window as any).tlsn) {
-      logToAgent('❌ 证明失败：未检测到 TLSNotary 浏览器插件！请先在 Chrome 中安装扩展。');
-      setErrorMsg(t.errNoExtension);
+    if (!account) {
+      logToAgent('❌ 请先连接 Web3 钱包！');
+      setErrorMsg(lang === 'zh' ? '请先连接钱包' : 'Please connect wallet');
+      setStep('error');
       return;
     }
 
-    const reqId = `c2c_trade_${Date.now()}`;
-    setRequestId(reqId);
-    setStep('proving');
-    setProveProgress(5);
-    setProveMessage(t.msgBankLoad);
-    logToAgent('📡 正在从本地服务器加载 swissbank.js 证明脚本代码...');
+    if (!(window as any).tlsn) {
+      logToAgent('❌ 证明失败：未检测到 TLSNotary 浏览器插件！请先在 Chrome 中安装扩展。');
+      setErrorMsg(t.errNoExtension);
+      setStep('error');
+      return;
+    }
+
+    await checkAndSwitchNetwork();
 
     try {
-      // 1. 获取已放置于 public 目录中的 swissbank 插件脚本代码
-      const response = await fetch('/plugins/swissbank.js');
-      if (!response.ok) throw new Error(t.errPluginCode);
-      const pluginCode = await response.text();
-      logToAgent('✅ swissbank.js 证明插件加载成功。正在唤起 Chrome TLSNotary 插件...');
-
-      // 2. 调用 Chrome 扩展的 RPC 执行该插件
-      logToAgent('📡 正在执行 window.tlsn.execCode... 请在弹出的浏览器窗口中完成登录与转账。');
-      console.log('📡 Calling window.tlsn.execCode with SwissBank plugin...');
-      const result = await (window as any).tlsn.execCode(pluginCode, {
-        requestId: reqId,
-        sessionData: { mode: 'Mpc' } // 采用 MPC 模式
+      const walletClient = createWalletClient({
+        account,
+        chain: targetChain,
+        transport: custom((window as any).ethereum)
       });
 
-      console.log('✅ Proof response from extension:', result);
-      logToAgent('🎉 zkTLS 密码学转账凭证生成成功！正在提交链上结算...');
-      await saveTransactionMemory();
+      const amountBig = parseUnits(sendAmount, 18);
+      const productId = selectedProduct ? selectedProduct.productId : (pair.includes('CNY') ? 1n : 0n);
+      const platformName = selectedProduct ? selectedProduct.platformName : (pair.includes('CNY') ? 'Alipay' : 'Wise');
+      const platformId = selectedProduct ? selectedProduct.platformId : (keccak256(stringToBytes(platformName.toLowerCase())) as `0x${string}`);
+
+      logToAgent(lang === 'zh' ? '📡 步骤 1/4: 检查并授权保证金库 (approve if needed)...' : '📡 Step 1/4: Check and approve BondVault...');
+      const estimatedBond = (amountBig * BigInt(requiredBondBps)) / 10000n;
       
-      // 3. 证明生成完毕，转账成立
-      setStep('success');
+      const currentAllowance = await publicClient.readContract({
+        address: USDT_ADDRESS,
+        abi: ERC20_ABI,
+        functionName: 'allowance',
+        args: [account, BOND_VAULT_ADDRESS],
+      }) as bigint;
+
+      if (currentAllowance < estimatedBond) {
+        logToAgent(lang === 'zh' ? '✍️ 请在钱包中确认授权保证金交易...' : '✍️ Please confirm USDT approval in wallet...');
+        const MAX_UINT256 = (2n ** 256n) - 1n;
+        const approveTx = await walletClient.writeContract({
+          address: USDT_ADDRESS,
+          abi: ERC20_ABI,
+          functionName: 'approve',
+          args: [BOND_VAULT_ADDRESS, MAX_UINT256],
+        });
+        logToAgent(lang === 'zh' ? '⌛ 等待授权交易确认...' : '⌛ Waiting for approval transaction confirmation...');
+        await publicClient.waitForTransactionReceipt({ hash: approveTx });
+        logToAgent(lang === 'zh' ? '✅ 授权成功！' : '✅ Approval successful!');
+      }
+
+      // 检查并自动设置买家的 Platform Binding
+      logToAgent(lang === 'zh' ? '📡 正在核对您的链上支付身份绑定...' : '📡 Verifying your on-chain payment binding...');
+      const buyerBinding = await publicClient.readContract({
+        address: ADMIN_ADDRESS,
+        abi: C2C_ADMIN_ABI,
+        functionName: 'getPlatformBinding',
+        args: [account, platformId],
+      }) as any;
+
+      const isBuyerBound = buyerBinding && (typeof buyerBinding === 'object' ? buyerBinding.isSet ?? buyerBinding[2] : false);
+
+      if (!isBuyerBound) {
+        logToAgent(lang === 'zh' ? '✍️ 检测到您的钱包尚未绑定网银身份，正在发起一键绑定...' : '✍️ No platform binding detected, initiating one-click binding...');
+        
+        const dummyName = platformName.toLowerCase() === 'wise' ? 'Wise Buyer' : 'Alipay Buyer';
+        const dummyHandle = '@buyer1';
+        
+        const saltHex = '0x1234567890123456789012345678901234567890123456789012345678901234' as `0x${string}`;
+        const nameHash = keccak256(encodePacked(['string', 'bytes32'], [dummyName.trim().toLowerCase().normalize('NFC'), saltHex]));
+        const idHash = keccak256(encodePacked(['string', 'bytes32'], [dummyHandle.trim().toLowerCase().normalize('NFC'), saltHex]));
+
+        const bindTx = await walletClient.writeContract({
+          address: ADMIN_ADDRESS,
+          abi: C2C_ADMIN_ABI,
+          functionName: 'setPlatformBinding',
+          args: [platformId, nameHash, idHash],
+        });
+
+        logToAgent(lang === 'zh' ? '⌛ 等待绑定交易确认...' : '⌛ Waiting for binding transaction confirmation...');
+        await publicClient.waitForTransactionReceipt({ hash: bindTx });
+        logToAgent(lang === 'zh' ? '✅ 网银身份绑定成功！' : '✅ Platform binding successful!');
+      }
+
+      logToAgent(lang === 'zh' ? '📡 步骤 2/4: 发起链上托管下单交易 (placeOrder)...' : '📡 Step 2/4: Submitting placeOrder transaction...');
+      const NULL_BUYER_INFO = {
+        nameHash: '0x0000000000000000000000000000000000000000000000000000000000000000' as `0x${string}`,
+        idHash: '0x0000000000000000000000000000000000000000000000000000000000000000' as `0x${string}`,
+        isSet: false
+      };
+
+      const placeTx = await walletClient.writeContract({
+        address: ESCROW_ADDRESS,
+        abi: C2C_ESCROW_ABI,
+        functionName: 'placeOrder',
+        args: [MERCHANT_ADDRESS, productId, 0, amountBig, NULL_BUYER_INFO]
+      });
+
+      logToAgent(lang === 'zh' ? '⌛ 等待下单交易确认...' : '⌛ Waiting for order placement confirmation...');
+      const receipt = await publicClient.waitForTransactionReceipt({ hash: placeTx });
+
+      let orderId = 0n;
+      let deadlineVal = 0n;
+      const parsedLogs = parseEventLogs({
+        abi: C2C_ESCROW_ABI,
+        logs: receipt.logs,
+        eventName: 'OrderPlaced',
+      });
+      if (parsedLogs.length > 0) {
+        orderId = (parsedLogs[0].args as any).orderId ?? 0n;
+        deadlineVal = (parsedLogs[0].args as any).deadline ?? 0n;
+      }
+
+      if (orderId === 0n) {
+        throw new Error(lang === 'zh' ? '无法解析下单交易日志获取 OrderID' : 'Failed to parse OrderPlaced logs');
+      }
+
+      logToAgent(
+        lang === 'zh'
+          ? `✅ 下单成功！订单 ID: ${orderId.toString()}，最晚付款时间: ${new Date(Number(deadlineVal) * 1000).toLocaleString()}`
+          : `✅ Order placed! ID: ${orderId.toString()}, Deadline: ${new Date(Number(deadlineVal) * 1000).toLocaleString()}`
+      );
+
+      // 构建 zkTLS 绑定上下文
+      logToAgent(lang === 'zh' ? '📡 正在读取合约订单快照以生成绑定哈希...' : '📡 Fetching contract order for binding hash...');
+      const order = await publicClient.readContract({
+        address: ESCROW_ADDRESS,
+        abi: C2C_ESCROW_ABI,
+        functionName: 'getOrder',
+        args: [MERCHANT_ADDRESS, productId, 0, orderId],
+      }) as any;
+
+      const orderRate = order[2] as bigint;
+      const orderRateVersion = order[5] as number;
+      const orderDeadline = order[3] as bigint;
+
+      const merchantBinding = await publicClient.readContract({
+        address: ADMIN_ADDRESS,
+        abi: C2C_ADMIN_ABI,
+        functionName: 'getPlatformBinding',
+        args: [MERCHANT_ADDRESS, platformId],
+      }) as any;
+
+      const ctx = {
+        escrowAddress: ESCROW_ADDRESS,
+        chainId: CHAIN_ID,
+        merchant: MERCHANT_ADDRESS,
+        buyer: account,
+        productId,
+        orderId,
+        assetType: 0,
+        amount: amountBig,
+        rate: orderRate,
+        rateVersion: orderRateVersion,
+        deadline: orderDeadline,
+        merchantNameHash: merchantBinding[0],
+        merchantIdHash: merchantBinding[1],
+        payeeNameHash: merchantBinding[0],
+        payeeIdHash: merchantBinding[1],
+      };
+
+      const orderBindingHash = keccak256(
+        encodePacked(
+          [
+            'address', 'uint64',
+            'address', 'address',
+            'uint256', 'uint256',
+            'uint8', 'uint256', 'uint256',
+            'uint32',
+            'uint256',
+            'bytes32', 'bytes32',
+            'bytes32', 'bytes32',
+          ],
+          [
+            ctx.escrowAddress,
+            BigInt(ctx.chainId),
+            ctx.merchant,
+            ctx.buyer,
+            ctx.productId,
+            ctx.orderId,
+            ctx.assetType,
+            ctx.amount,
+            ctx.rate,
+            Number(ctx.rateVersion),
+            ctx.deadline,
+            ctx.merchantNameHash,
+            ctx.merchantIdHash,
+            ctx.payeeNameHash,
+            ctx.payeeIdHash,
+          ],
+        ),
+      );
+
+      // 加载对应的证明插件脚本
+      const pluginUrl = platformName.toLowerCase() === 'alipay' ? '/plugins/alipay.js' : '/plugins/wise.js';
+      logToAgent(lang === 'zh' ? `📡 步骤 3/4: 加载 ${platformName} 证明插件并注入绑定关系...` : `📡 Step 3/4: Loading ${platformName} plugin...`);
+      setStep('proving');
+      setProveProgress(20);
+      setProveMessage(t.msgBankLoad);
+
+      const response = await fetch(pluginUrl);
+      if (!response.ok) throw new Error(t.errPluginCode);
+      let pluginCode = await response.text();
+
+      // 替换插件中所有的哨兵常量
+      pluginCode = pluginCode
+        .replace(/"0x0000000000000000000000000000000000000000000000000000000000000001"/g, `"${orderBindingHash}"`)
+        .replace(/'0x0000000000000000000000000000000000000000000000000000000000000001'/g, `'${orderBindingHash}'`)
+        .replace(/"0x0000000000000000000000000000000000000000000000000000000000000002"/g, `"${ctx.merchantNameHash}"`)
+        .replace(/'0x0000000000000000000000000000000000000000000000000000000000000002'/g, `'${ctx.merchantNameHash}'`)
+        .replace(/"0x0000000000000000000000000000000000000000000000000000000000000003"/g, `"${ctx.merchantIdHash}"`)
+        .replace(/'0x0000000000000000000000000000000000000000000000000000000000000003'/g, `'${ctx.merchantIdHash}'`)
+        .replace(/"0x0000000000000000000000000000000000000000000000000000000000000004"/g, `"${ctx.payeeNameHash}"`)
+        .replace(/'0x0000000000000000000000000000000000000000000000000000000000000004'/g, `'${ctx.payeeNameHash}'`)
+        .replace(/"0x0000000000000000000000000000000000000000000000000000000000000005"/g, `"${ctx.payeeIdHash}"`)
+        .replace(/'0x0000000000000000000000000000000000000000000000000000000000000005'/g, `'${ctx.payeeIdHash}'`)
+        .replace(/"0x0000000000000000000000000000000000000000000000000000000000000007"/g, `"${account.toLowerCase()}"`)
+        .replace(/'0x0000000000000000000000000000000000000000000000000000000000000007'/g, `'${account.toLowerCase()}'`)
+        .replace(/"0x0000000000000000000000000000000000000000000000000000000000000008"/g, `"${MERCHANT_ADDRESS.toLowerCase()}"`)
+        .replace(/'0x0000000000000000000000000000000000000000000000000000000000000008'/g, `'${MERCHANT_ADDRESS.toLowerCase()}'`);
+
+      if (platformName.toLowerCase() === 'wise') {
+        pluginCode = pluginCode
+          .replace(/"0x0000000000000000000000000000000000000000000000000000000000000006"/g, `"${orderBindingHash}"`)
+          .replace(/'0x0000000000000000000000000000000000000000000000000000000000000006'/g, `'${orderBindingHash}'`);
+      }
+
+      // 执行插件
+      logToAgent(lang === 'zh' ? '✍️ 正在唤起浏览器插件进行转账支付证明...请在弹出的网银窗口中完成登录' : '✍️ Invoking browser extension for zkTLS proof...');
+      setProveProgress(40);
+      setProveMessage(t.msgConnecting);
+
+      const reqId = `c2c_trade_${Date.now()}`;
+      setRequestId(reqId);
+
+      const resultStr = await (window as any).tlsn.execCode(pluginCode, {
+        requestId: reqId,
+        sessionData: { mode: 'Mpc' }
+      });
+
+      const parsedResult = JSON.parse(resultStr);
+      logToAgent('✅ zkTLS 密码学转账凭证生成成功！');
+
+      setProveProgress(80);
+      setProveMessage(t.msgComplete);
+
+      // 构建链上提交的 proofs
+      const mapDirection = (dir: string) => {
+        if (dir === 'RECV') return 'Recv';
+        if (dir === 'SENT') return 'Sent';
+        return dir;
+      };
+
+      const buildContractProofObj = (proof: any) => {
+        if (!proof.verifierSignature) {
+          throw new Error('verifierSignature is missing in proof');
+        }
+        const sig = proof.verifierSignature;
+        const policyVersionHash = sig.policyVersionHash || keccak256(stringToBytes(sig.policyVersion || 'v1.0.0'));
+        
+        const revealedItems = proof.results.map((r: any) => ({
+          handlerType: r.type,
+          part: r.part,
+          value: r.value,
+          commitment_index: BigInt(r.commitmentIndex ?? 0),
+          start_item: BigInt(r.start ?? 0),
+          end_item: BigInt(r.end ?? 0),
+          start_value: BigInt(r.startValue ?? 0),
+          end_value: BigInt(r.endValue ?? r.value?.length ?? 0),
+        }));
+
+        const commitmentOpenings = (proof.transcriptCommitOpenings || []).map((o: any) => ({
+          blinderHex: o.blinderHex.startsWith('0x') ? o.blinderHex : `0x${o.blinderHex}`,
+        }));
+
+        const commitments = (proof.transcriptCommitments || []).map((c: any) => ({
+          direction: mapDirection(c.direction ?? 'RECV'),
+          hashAlg: c.hashAlg ?? 'Keccak256',
+          hashValue: c.hashHex.startsWith('0x') ? c.hashHex : `0x${c.hashHex}`,
+        }));
+
+        return {
+          chainId: BigInt(sig.chainId ?? 0),
+          sessionId: sig.sessionId,
+          commitmentsHash: sig.commitmentsHash.startsWith('0x') ? sig.commitmentsHash : `0x${sig.commitmentsHash}`,
+          orderBindingHash: sig.orderBindingHash.startsWith('0x') ? sig.orderBindingHash : `0x${sig.orderBindingHash}`,
+          policyVersionHash: policyVersionHash.startsWith('0x') ? policyVersionHash : `0x${policyVersionHash}`,
+          verifierSignature: sig.signature.startsWith('0x') ? sig.signature : `0x${sig.signature}`,
+          revealedItems,
+          commitmentOpenings,
+          commitments,
+          serverName: proof.serverName ?? '',
+        };
+      };
+
+      let proofsArr = [];
+      if (platformName.toLowerCase() === 'wise') {
+        const wiseProofs = parsedResult.proofs || parsedResult;
+        proofsArr = [
+          buildContractProofObj(wiseProofs.contacts),
+          buildContractProofObj(wiseProofs.transfer)
+        ];
+      } else {
+        proofsArr = [buildContractProofObj(parsedResult)];
+      }
+
+      logToAgent(lang === 'zh' ? '📡 步骤 4/4: 正在提交智能合约释放资金...' : '📡 Step 4/4: Submitting proofs to contract...');
+      const payTx = await walletClient.writeContract({
+        address: ESCROW_ADDRESS,
+        abi: C2C_ESCROW_ABI,
+        functionName: 'payOrderByPlatform',
+        args: [MERCHANT_ADDRESS, productId, orderId, proofsArr]
+      });
+
+      logToAgent(lang === 'zh' ? '⌛ 等待清算放款交易确认...' : '⌛ Waiting for settlement confirmation...');
+      await publicClient.waitForTransactionReceipt({ hash: payTx });
+
       logToAgent(`🎉 智能合约自动结算成功：已将 ${receiveAmount} ${quote} 解锁并存入您的账户。`);
+      await saveTransactionMemory();
+
+      setStep('success');
     } catch (err: any) {
-      console.error('❌ zkTLS proof generation failed:', err);
-      logToAgent(`❌ zkTLS 证明生成失败：${err.message || '未知错误'}`);
+      console.error('❌ C2C transaction failed:', err);
+      logToAgent(`❌ 交易发生错误：${err.message || '未知错误'}`);
       setErrorMsg(err.message || t.errVerificationFail);
       setStep('error');
     }
@@ -342,6 +862,126 @@ export function C2CTradeCard({ currentRate, pair, lang, amount, setAmount, analy
   return (
     <div className="glass-card" style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', minHeight: '480px' }}>
       
+      {/* 钱包连接与链上状态栏 */}
+      <div style={{
+        background: 'rgba(255, 255, 255, 0.02)',
+        border: '1px solid rgba(255, 255, 255, 0.05)',
+        borderRadius: '12px',
+        padding: '12px 16px',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '8px',
+        fontSize: '0.85rem'
+      }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <span style={{ color: 'var(--text-muted)', fontWeight: 500 }}>
+            {lang === 'zh' ? 'EOA 钱包账户' : 'EOA Wallet'}
+          </span>
+          {account ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <span style={{
+                fontFamily: 'monospace',
+                color: 'var(--success)',
+                fontWeight: 600,
+                background: 'rgba(16, 185, 129, 0.1)',
+                padding: '2px 8px',
+                borderRadius: '6px'
+              }}>
+                {account.slice(0, 6)}...{account.slice(-4)}
+              </span>
+            </div>
+          ) : (
+            <button
+              onClick={connectWallet}
+              className="btn-primary"
+              style={{
+                padding: '4px 12px',
+                fontSize: '0.8rem',
+                borderRadius: '6px',
+                margin: 0
+              }}
+            >
+              {lang === 'zh' ? '连接钱包' : 'Connect Wallet'}
+            </button>
+          )}
+        </div>
+
+        {account && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '8px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ color: 'var(--text-muted)' }}>{lang === 'zh' ? 'USDT 可用余额' : 'USDT Balance'}</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <strong style={{ color: 'var(--text-primary)' }}>{Number(usdtBalance).toFixed(2)} USDT</strong>
+                <button
+                  onClick={async () => {
+                    if (!account) return;
+                    try {
+                      const ethereum = typeof window !== 'undefined' ? (window as any).ethereum : undefined;
+                      if (!ethereum) return;
+                      const walletClient = createWalletClient({
+                        account,
+                        chain: targetChain,
+                        transport: custom(ethereum)
+                      });
+                      const mintAmount = parseUnits("1000", 18);
+                      const txHash = await walletClient.writeContract({
+                        address: USDT_ADDRESS,
+                        abi: [
+                          ...ERC20_ABI,
+                          {
+                            type: 'function',
+                            name: 'mint',
+                            inputs: [
+                              { name: 'to', type: 'address' },
+                              { name: 'amount', type: 'uint256' }
+                            ],
+                            outputs: [{ name: '', type: 'bool' }],
+                            stateMutability: 'nonpayable'
+                          }
+                        ],
+                        functionName: 'mint',
+                        args: [account, mintAmount],
+                      });
+                      alert(lang === 'zh' ? `领水交易已发送，获得 1000 USDT\nHash: ${txHash}` : `Faucet tx sent, received 1000 USDT\nHash: ${txHash}`);
+                    } catch (e: any) {
+                      console.error(e);
+                      alert(e.message || e);
+                    }
+                  }}
+                  style={{
+                    padding: '2px 8px',
+                    fontSize: '0.7rem',
+                    background: 'rgba(255,255,255,0.08)',
+                    border: '1px solid rgba(255,255,255,0.15)',
+                    borderRadius: '4px',
+                    color: 'var(--text-primary)',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s',
+                  }}
+                  onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.15)'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.08)'; }}
+                >
+                  {lang === 'zh' ? '领水' : 'Faucet'}
+                </button>
+              </div>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span style={{ color: 'var(--text-muted)' }}>{lang === 'zh' ? 'ETH 可用余额' : 'ETH Balance'}</span>
+              <strong style={{ color: 'var(--text-primary)' }}>{Number(ethBalance).toFixed(4)} ETH</strong>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span style={{ color: 'var(--text-muted)' }}>{lang === 'zh' ? '链上风控等级 / 保证金比例' : 'Risk Level / Bond Ratio'}</span>
+              <span style={{
+                color: isFrozen ? 'var(--danger)' : riskLevel === 0 ? 'var(--success)' : 'var(--warning)',
+                fontWeight: 600
+              }}>
+                {isFrozen ? (lang === 'zh' ? '已冻结' : 'FROZEN') : `${lang === 'zh' ? '等级' : 'Level'} ${riskLevel} (${(requiredBondBps / 100).toFixed(1)}%)`}
+              </span>
+            </div>
+          </div>
+        )}
+      </div>
+
       {/* 交易模式 Tab */}
       {step === 'input' && (
         <div style={{ display: 'flex', background: 'var(--bg-subcard)', border: '1px solid var(--border-subcard)', borderRadius: '10px', padding: '4px' }}>
@@ -568,7 +1208,25 @@ export function C2CTradeCard({ currentRate, pair, lang, amount, setAmount, analy
                     {merchant.rate.toFixed(4)}
                   </div>
                   <button
-                    onClick={handleInitiateTrade}
+                    onClick={() => {
+                      const prod = contractProducts.find(p => p.productId === merchant.productId);
+                      const resolvedProduct = prod ? {
+                        platformName: prod.platformName,
+                        productId: prod.productId,
+                        platformId: prod.platformId,
+                        rate: prod.rate
+                      } : {
+                        platformName: merchant.platformName,
+                        productId: merchant.productId,
+                        platformId: merchant.platformId,
+                        rate: merchant.rate
+                      };
+                      setSelectedProduct(resolvedProduct);
+                      setStep('pay');
+                      setErrorMsg('');
+                      setProveProgress(0);
+                      setProveMessage(t.initMessage);
+                    }}
                     style={{
                       background: 'var(--primary)',
                       border: 'none',
@@ -601,17 +1259,20 @@ export function C2CTradeCard({ currentRate, pair, lang, amount, setAmount, analy
           <div style={{ background: 'rgba(245,158,11,0.03)', border: '1px solid rgba(245,158,11,0.1)', padding: '12px', borderRadius: '10px', fontSize: '0.85rem' }}>
             <div style={{ color: 'var(--text-primary)', fontWeight: 600, marginBottom: '6px' }}>{t.step1Title}</div>
             <div style={{ color: 'var(--text-muted)', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-              <div>{t.bankLabel} **{t.bankName}**</div>
-              <div>{t.nameLabel} **FastSwap merchant**</div>
-              <div>{t.accLabel} **4000-1234-5678**</div>
-              <div>{t.amtLabel} **{sendAmount} USD**</div>
+              <div>{t.bankLabel} **{selectedProduct?.platformName || (pair.includes('CNY') ? 'Alipay' : 'Wise')}**</div>
+              <div>{t.nameLabel} **{selectedProduct?.platformName?.toLowerCase() === 'alipay' ? 'KELLY LIM HOOI YEN' : 'KAI XU LOOI'}**</div>
+              <div>{t.accLabel} **{selectedProduct?.platformName?.toLowerCase() === 'alipay' ? 'kellylimhooiyen@hotmail.com' : '@kaixul1'}**</div>
+              <div>{t.amtLabel} <strong style={{ color: 'var(--warning)', fontSize: '1.1rem' }}>{receiveAmount} {quote}</strong></div>
             </div>
           </div>
 
           <div style={{ background: 'rgba(99,102,241,0.03)', border: '1px solid rgba(99,102,241,0.1)', padding: '12px', borderRadius: '10px', fontSize: '0.85rem' }}>
             <div style={{ color: 'var(--text-primary)', fontWeight: 600, marginBottom: '6px' }}>{t.step2Title}</div>
             <p style={{ color: 'var(--text-muted)', margin: 0, fontSize: '0.8rem', lineHeight: '1.4' }}>
-              {t.step2Desc.replace('{amount}', sendAmount)}
+              {lang === 'zh'
+                ? `转账完成后，点击下方按钮唤醒 TLSNotary。插件会弹出相应的网银/支付窗口进行核实，自动剥离你的账户隐私字段，仅将 “向承兑商转账 ${receiveAmount} ${quote}” 的汇款凭证上传智能合约解锁放款。`
+                : `After transfer, click the button below to invoke TLSNotary. The extension will open the portal, verify the transfer, redact your privacy details, and upload only the proof of "sent ${receiveAmount} ${quote} to merchant" to release funds.`
+              }
             </p>
           </div>
 

@@ -5,6 +5,9 @@ import { GoogleGenerativeAI, SchemaType } from '@google/generative-ai';
 import { pool } from './db.js';
 import { syncPolymarketData } from './sync.js';
 import { syncFxHistory } from './sync_fx.js';
+import { createPublicClient, http } from 'viem';
+import { hardhat, sepolia } from 'viem/chains';
+import { C2C_RISK_MANAGER_ABI } from './lib/contractAbi.js';
 
 // 安全提取并解析 AI 返回的 JSON 字符串的辅助工具
 function extractJson(text: string): any {
@@ -27,6 +30,62 @@ function extractJson(text: string): any {
 }
 
 dotenv.config();
+
+const riskManagerAddress = (process.env.VITE_C2C_RISK_MANAGER_ADDRESS || '').toLowerCase();
+
+const CHAIN_ID = Number(process.env.VITE_CHAIN_ID || '11155111');
+const targetChain = CHAIN_ID === 11155111 ? sepolia : hardhat;
+const targetRpcUrl = process.env.VITE_RPC_URL || 'https://rpc.ankr.com/eth_sepolia';
+
+const publicClient = createPublicClient({
+  chain: targetChain,
+  transport: http(targetRpcUrl)
+});
+
+async function getOnChainReputation(user: string) {
+  try {
+    const reputation = await publicClient.readContract({
+      address: riskManagerAddress as `0x${string}`,
+      abi: C2C_RISK_MANAGER_ABI,
+      functionName: 'getReputation',
+      args: [user as `0x${string}`]
+    }) as any;
+    
+    const requiredBond = await publicClient.readContract({
+      address: riskManagerAddress as `0x${string}`,
+      abi: C2C_RISK_MANAGER_ABI,
+      functionName: 'requiredBondBps',
+      args: [user as `0x${string}`]
+    }) as number;
+
+    return {
+      completedCount: reputation[0],
+      timeoutCount: reputation[1],
+      consecutiveTimeouts: reputation[2],
+      completedSinceLastTimeout: reputation[3],
+      riskLevel: reputation[4],
+      temporarilyFrozen: reputation[5],
+      blacklisted: reputation[6],
+      frozenUntil: Number(reputation[7] || 0n),
+      lastTimeoutAt: Number(reputation[8] || 0n),
+      requiredBondBps: requiredBond
+    };
+  } catch (error) {
+    console.warn('⚠️ Failed to fetch reputation from on-chain RiskManager:', error instanceof Error ? error.message : String(error));
+    return {
+      completedCount: 0,
+      timeoutCount: 0,
+      consecutiveTimeouts: 0,
+      completedSinceLastTimeout: 0,
+      riskLevel: 0,
+      temporarilyFrozen: false,
+      blacklisted: false,
+      frozenUntil: 0,
+      lastTimeoutAt: 0,
+      requiredBondBps: 1000 // 10%
+    };
+  }
+}
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -351,6 +410,10 @@ app.get('/api/fx-intel', async (req, res) => {
     memories = await getHyMemories(userId, memoryQuery);
     console.log(`🧠 [Long-term Memory] Retrieved ${memories.length} pieces of memory.`);
 
+    // 4.6. 获取链上信用及保证金比例
+    const userAddress = (req.query.userAddress as string || '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266');
+    const onChainRep = await getOnChainReputation(userAddress);
+
     // 5. 根据配置文件，组装中英文 Prompt，并分流调用大模型
     const isZh = (process.env.PROMPT_LANG || lang) === 'zh';
 
@@ -363,6 +426,12 @@ app.get('/api/fx-intel', async (req, res) => {
       - Spot Market Rate: 1 ${base} = ${currentRate.toFixed(4)} ${quote}
       - Platform Effective Rate (including spread and slippage): 1 ${base} = ${effectiveRate.toFixed(4)} ${quote}
       - Calculated Spread & Slippage cost: ${(totalCostFactor * 100).toFixed(2)}%
+      - User's On-Chain Reputation Details:
+        - Completed Trades: ${onChainRep.completedCount}
+        - Timed Out Trades: ${onChainRep.timeoutCount}
+        - Current Risk Level: ${onChainRep.riskLevel} (0 to 10)
+        - Required Bond Percentage: ${(onChainRep.requiredBondBps / 100).toFixed(2)}%
+        - Frozen Status: ${onChainRep.temporarilyFrozen ? 'FROZEN' : 'ACTIVE'}
       - 7d Change: ${change7d}%
       - 30d Change: ${change30d}%
       - 30d Realized Volatility: ${realizedVol30d}%
@@ -412,6 +481,12 @@ app.get('/api/fx-intel', async (req, res) => {
       - 市场即期汇率：1 ${base} = ${currentRate.toFixed(4)} ${quote}
       - 平台实际到手汇率（已计入点差和滑点折损）：1 ${base} = ${effectiveRate.toFixed(4)} ${quote}
       - 计算得出的点差与滑点成本比例：${(totalCostFactor * 100).toFixed(2)}%
+      - 用户链上信用声誉详情：
+        - 累计完成交易笔数：${onChainRep.completedCount} 笔
+        - 累计超时未支付交易笔数：${onChainRep.timeoutCount} 笔
+        - 当前风险评级（Risk Level）：${onChainRep.riskLevel} 级（0-10 级，级数越高信用越差）
+        - 交易所需缴纳的保证金比例：${(onChainRep.requiredBondBps / 100).toFixed(2)}%
+        - 账号冻结状态：${onChainRep.temporarilyFrozen ? '已冻结' : '正常活跃'}
       - 7天汇率变化率：${change7d}%
       - 30天汇率变化率：${change30d}%
       - 30天历史实现波动率：${realizedVol30d}%
@@ -571,6 +646,7 @@ app.get('/api/fx-intel', async (req, res) => {
       analysis: parsedAnalysis,
       polymarketData: ragEvents,
       longTermMemories: memories,
+      onChainReputation: onChainRep,
       provider,
       model: provider === 'hunyuan' ? (process.env.HUNYUAN_MODEL || 'hy3-preview') : 'gemini-2.5-flash'
     };
@@ -639,7 +715,19 @@ app.get('/api/fx-intel', async (req, res) => {
       polymarketData: finalRag,
       provider,
       model: provider === 'hunyuan' ? (process.env.HUNYUAN_MODEL || 'hy3-preview') : 'gemini-2.5-flash',
-      longTermMemories: memories
+      longTermMemories: memories,
+      onChainReputation: {
+        completedCount: 0,
+        timeoutCount: 0,
+        consecutiveTimeouts: 0,
+        completedSinceLastTimeout: 0,
+        riskLevel: 0,
+        temporarilyFrozen: false,
+        blacklisted: false,
+        frozenUntil: 0,
+        lastTimeoutAt: 0,
+        requiredBondBps: 1000
+      }
     });
   }
 });

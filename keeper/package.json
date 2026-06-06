@@ -1,0 +1,23 @@
+{
+  "name": "fx-intel-keeper",
+  "version": "1.0.0",
+  "description": "Off-chain keeper for C2CEscrow",
+  "type": "module",
+  "private": true,
+  "main": "./dist/index.js",
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "start": "node dist/index.js",
+    "build": "tsc -p tsconfig.build.json",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "viem": "^2.52.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.7",
+    "tsx": "^4.20.3",
+    "typescript": "^5.5.4"
+  }
+}

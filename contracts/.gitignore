@@ -1,0 +1,26 @@
+# Node modules
+/node_modules
+
+# Compilation output
+/dist
+
+# pnpm deploy output
+/bundle
+
+# Hardhat Build Artifacts
+/artifacts
+
+# Hardhat compilation (v2) support directory
+/cache
+
+# Typechain output
+/types
+
+# Hardhat coverage reports
+/coverage
+
+# Local-only deployment artifacts emitted by deploy-web.ts / deploy-c2c-demo.ts.
+# Each labelled file is per-chain (31337 = hardhat local). Other chain files
+# (mainnet/testnet) can still be committed individually if needed.
+/deployments/*-31337.json
+/deployments/31337.json

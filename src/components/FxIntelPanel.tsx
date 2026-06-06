@@ -152,7 +152,8 @@ export function FxIntelPanel({
   onAnalysisUpdate 
 }: FxIntelPanelProps) {
   const [pair, setPair] = useState('USD/CNY');
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
+  const [hasRun, setHasRun] = useState(false);
   const [loadingStep, setLoadingStep] = useState(0);
   const [data, setData] = useState<FxData | null>(null);
   const [hoveredPoint, setHoveredPoint] = useState<{ date: string; rate: number; index: number } | null>(null);
@@ -271,17 +272,18 @@ export function FxIntelPanel({
     }
   };
 
-  // 1. 仅在货币对改变时自动触发，并重置倒计时（表单金额/观察期变化不再自动触发）
+  // 1. 仅在货币对改变且智能体已启动过时自动触发，并重置倒计时（表单金额/观察期变化不再自动触发）
   useEffect(() => {
+    if (!hasRun) return;
     fetchIntel(pair);
     if (autoInterval > 0) {
       setCountdown(autoInterval);
     }
-  }, [pair]);
+  }, [pair, hasRun]);
 
   // 2. 自动巡检定时器逻辑
   useEffect(() => {
-    if (autoInterval <= 0 || !isTimerActive || loading) {
+    if (!hasRun || autoInterval <= 0 || !isTimerActive || loading) {
       return;
     }
 
@@ -296,10 +298,11 @@ export function FxIntelPanel({
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [autoInterval, isTimerActive, loading, pair, amount, horizon, lang]);
+  }, [autoInterval, isTimerActive, loading, pair, amount, horizon, lang, hasRun]);
 
   // 手动触发运行 AI 智能体
   const handleManualRun = () => {
+    setHasRun(true);
     fetchIntel(pair);
     if (autoInterval > 0) {
       setCountdown(autoInterval);
@@ -716,12 +719,12 @@ export function FxIntelPanel({
               width: '6px', 
               height: '6px', 
               borderRadius: '50%', 
-              background: '#34d399', 
-              boxShadow: '0 0 8px #34d399',
+              background: data ? '#34d399' : '#6366f1', 
+              boxShadow: data ? '0 0 8px #34d399' : '0 0 8px #6366f1',
               animation: 'badgeBlink 2s infinite' 
             }} />
-            <span style={{ fontSize: '0.75rem', color: '#34d399', fontWeight: 600 }}>
-              {lang === 'zh' ? '运行中' : 'Active'}
+            <span style={{ fontSize: '0.75rem', color: data ? '#34d399' : '#818cf8', fontWeight: 600 }}>
+              {data ? (lang === 'zh' ? '运行中' : 'Active') : (lang === 'zh' ? '已就绪' : 'Ready')}
             </span>
           </div>
         </div>
@@ -738,10 +741,12 @@ export function FxIntelPanel({
           <div style={{ display: 'flex', gap: '4px', color: 'var(--text-muted)' }}>
             <span>{lang === 'zh' ? '基座模型:' : 'Core Model:'}</span>
             <strong style={{ color: 'var(--text-primary)' }}>
-              {data?.provider === 'hunyuan' ? 'Tencent Hunyuan' : 'Google Gemini'} 
-              <span style={{ fontSize: '0.7rem', color: 'var(--primary)', marginLeft: '4px' }}>
-                ({data?.model || 'hy3-preview'})
-              </span>
+              {data ? (data.provider === 'hunyuan' ? 'Tencent Hunyuan' : 'Google Gemini') : 'Pending...'} 
+              {data && (
+                <span style={{ fontSize: '0.7rem', color: 'var(--primary)', marginLeft: '4px' }}>
+                  ({data.model || 'hy3-preview'})
+                </span>
+              )}
             </strong>
           </div>
           <div style={{ display: 'flex', gap: '4px', color: 'var(--text-muted)' }}>
@@ -755,7 +760,7 @@ export function FxIntelPanel({
           <div style={{ display: 'flex', gap: '4px', color: 'var(--text-muted)' }}>
             <span>{lang === 'zh' ? '决策依据:' : 'Reference:'}</span>
             <strong style={{ color: 'var(--text-primary)' }}>
-              {data?.polymarketData?.length || 0} {lang === 'zh' ? '个相关预测盘口' : 'active predictions'}
+              {data ? `${data.polymarketData?.length || 0} ${lang === 'zh' ? '个相关预测盘口' : 'active predictions'}` : 'Pending...'}
             </strong>
           </div>
         </div>
@@ -802,6 +807,71 @@ export function FxIntelPanel({
           </select>
         </div>
       </div>
+
+      {/* 智能体尚未启动时的就绪提示和启动按钮 */}
+      {!data && (
+        <div
+          className="glass-card"
+          style={{
+            background: 'rgba(99, 102, 241, 0.03)',
+            border: '1px dashed rgba(99, 102, 241, 0.3)',
+            borderRadius: '16px',
+            padding: '2.5rem 2rem',
+            textAlign: 'center',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            gap: '1.25rem',
+            marginTop: '1rem',
+            boxShadow: 'inset 0 0 20px rgba(99, 102, 241, 0.05)'
+          }}
+        >
+          <div className="agent-avatar-sphere" style={{ animation: 'pulsePrimary 2s infinite', width: '64px', height: '64px', cursor: 'pointer' }} onClick={handleManualRun}>
+            <Cpu size={28} color="white" />
+          </div>
+          
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', maxWidth: '480px' }}>
+            <h3 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 700 }} className="gradient-text">
+              {lang === 'zh' ? '智能套保决策智能体就绪' : 'AI Hedging Decision Agent Ready'}
+            </h3>
+            <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--text-muted)', lineHeight: '1.6' }}>
+              {lang === 'zh'
+                ? '外汇套保智能体已准备完毕。请先配置您的交易参数（分析货币对、计划兑换金额与观察周期偏好），然后点击下方按钮启动智能体进行多维数据对齐与套保策略推理。'
+                : 'The FX Hedging Agent is ready. Please configure your swap parameters (Currency Pair, Amount, and Horizon) above, then click the button below to start RAG event analysis and timing decision reasoning.'}
+            </p>
+          </div>
+
+          <button
+            onClick={handleManualRun}
+            style={{
+              background: 'linear-gradient(90deg, #6366f1, #a855f7)',
+              border: 'none',
+              color: 'white',
+              padding: '12px 32px',
+              fontSize: '0.95rem',
+              fontWeight: 700,
+              borderRadius: '30px',
+              cursor: 'pointer',
+              boxShadow: '0 4px 15px rgba(99, 102, 241, 0.4)',
+              transition: 'transform 0.2s, box-shadow 0.2s',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px'
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.transform = 'translateY(-2px)';
+              e.currentTarget.style.boxShadow = '0 6px 20px rgba(99, 102, 241, 0.5)';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.transform = 'translateY(0)';
+              e.currentTarget.style.boxShadow = '0 4px 15px rgba(99, 102, 241, 0.4)';
+            }}
+          >
+            <Sparkles size={16} />
+            <span>{lang === 'zh' ? '启动智能套保分析' : 'Start FX Hedging Analysis'}</span>
+          </button>
+        </div>
+      )}
 
       {/* 汇率数值与成本展示区 */}
       {data && (

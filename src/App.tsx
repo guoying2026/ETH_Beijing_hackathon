@@ -1,14 +1,28 @@
 import { useState, useEffect } from 'react';
 import { FxIntelPanel } from './components/FxIntelPanel';
 import { C2CTradeCard } from './components/C2CTradeCard';
-import { Shield, Database, Cpu, HelpCircle, Server, Languages, Sun, Moon, Bot, Terminal, X } from 'lucide-react';
+import { DashboardPanel } from './components/DashboardPanel';
+import { MerchantPanel } from './components/MerchantPanel';
+import { AdminPanel } from './components/AdminPanel';
+import { Shield, HelpCircle, Languages, Sun, Moon, Bot, Terminal, X, User, Store, ShieldAlert } from 'lucide-react';
+import { createPublicClient, http } from 'viem';
+import { hardhat, sepolia } from 'viem/chains';
 
-interface SystemStatus {
-  extension: 'ok' | 'missing';
-  nodeBackend: 'ok' | 'error';
-  rustVerifier: 'ok' | 'error';
-  swissBank: 'ok' | 'error';
-}
+const ADMIN_ADDRESS = (import.meta.env.VITE_C2C_ADMIN_ADDRESS || '').toLowerCase() as `0x${string}`;
+const ESCROW_ADDRESS = (import.meta.env.VITE_C2C_ESCROW_ADDRESS || '').toLowerCase() as `0x${string}`;
+const RISK_MANAGER_ADDRESS = (import.meta.env.VITE_C2C_RISK_MANAGER_ADDRESS || '').toLowerCase() as `0x${string}`;
+const BOND_VAULT_ADDRESS = (import.meta.env.VITE_C2C_BOND_VAULT_ADDRESS || '').toLowerCase() as `0x${string}`;
+const USDT_ADDRESS = (import.meta.env.VITE_USDT_ADDRESS || '').toLowerCase() as `0x${string}`;
+const MERCHANT_ADDRESS = (import.meta.env.VITE_MERCHANT_ADDRESS || '').toLowerCase() as `0x${string}`;
+
+const CHAIN_ID = Number(import.meta.env.VITE_CHAIN_ID || '11155111');
+const targetChain = CHAIN_ID === 11155111 ? sepolia : hardhat;
+const targetRpcUrl = import.meta.env.VITE_RPC_URL || 'https://rpc.ankr.com/eth_sepolia';
+
+const publicClient = createPublicClient({
+  chain: targetChain,
+  transport: http(targetRpcUrl)
+});
 
 const getT = (lang: 'zh' | 'en', activeAI: { provider: string; model: string }) => {
   const modelName = activeAI.provider === 'hunyuan' ? 'Tencent Hunyuan (腾讯混元)' : 'Gemini 2.5';
@@ -27,9 +41,6 @@ const getT = (lang: 'zh' | 'en', activeAI: { provider: string; model: string }) 
     verifierLabel: lang === 'zh' ? 'Rust 验证器 (:7047):' : 'Rust Verifier (:7047):',
     verifierOnline: lang === 'zh' ? '已运行 (Online)' : 'Online',
     verifierOffline: lang === 'zh' ? '未探测 (No Health)' : 'Offline',
-    bankLabel: lang === 'zh' ? 'SwissBank 网银 (:3000):' : 'SwissBank Bank (:3000):',
-    bankActive: lang === 'zh' ? '运行中 (Active)' : 'Active',
-    bankOffline: lang === 'zh' ? '离线 (Offline)' : 'Offline',
     disclaimer: lang === 'zh'
       ? '免责声明：本系统为黑客松项目 Demo 演示展示，所载之汇率分析及预测数据仅供参考，不构成任何真实的投资与理财决策建议。'
       : 'Disclaimer: This system is a hackathon project demo. The FX analysis and predictions provided are for reference only and do not constitute actual financial or investment advice.',
@@ -53,6 +64,50 @@ export function App() {
     return 'dark';
   });
   const [activeAI, setActiveAI] = useState<{ provider: string; model: string }>({ provider: 'gemini', model: 'gemini-2.5-flash' });
+  const [appTab, setAppTab] = useState<'trade' | 'dashboard' | 'merchant' | 'admin'>('trade');
+  const [account, setAccount] = useState<`0x${string}` | null>(null);
+
+  const connectWallet = async () => {
+    const ethereum = typeof window !== 'undefined' ? (window as any).ethereum : undefined;
+    if (typeof ethereum !== 'undefined') {
+      try {
+        const addresses = await ethereum.request({ method: 'eth_requestAccounts' });
+        if (addresses.length > 0) {
+          setAccount(addresses[0] as `0x${string}`);
+        }
+      } catch (err) {
+        console.error(err);
+      }
+    } else {
+      alert(lang === 'zh' ? '未检测到 MetaMask 钱包插件！' : 'MetaMask not detected!');
+    }
+  };
+
+  useEffect(() => {
+    const ethereum = typeof window !== 'undefined' ? (window as any).ethereum : undefined;
+    if (typeof ethereum !== 'undefined') {
+      ethereum.request({ method: 'eth_accounts' })
+        .then((accounts: string[]) => {
+          if (accounts.length > 0) {
+            setAccount(accounts[0] as `0x${string}`);
+          }
+        })
+        .catch(console.error);
+
+      const handleAccountsChanged = (accounts: string[]) => {
+        if (accounts.length > 0) {
+          setAccount(accounts[0] as `0x${string}`);
+        } else {
+          setAccount(null);
+        }
+      };
+
+      ethereum.on('accountsChanged', handleAccountsChanged);
+      return () => {
+        ethereum?.removeListener('accountsChanged', handleAccountsChanged);
+      };
+    }
+  }, []);
 
   // AI Agent States
   const [logs, setLogs] = useState<Array<{ time: string; text: string }>>([
@@ -169,63 +224,7 @@ export function App() {
     return () => clearTimeout(timer);
   }, [lang, analysis]);
   
-  // 系统四大服务健康检查状态
-  const [status, setStatus] = useState<SystemStatus>({
-    extension: 'missing',
-    nodeBackend: 'error',
-    rustVerifier: 'error',
-    swissBank: 'error',
-  });
 
-  const checkServices = async () => {
-    const newStatus: SystemStatus = {
-      extension: typeof window !== 'undefined' && (window as any).tlsn ? 'ok' : 'missing',
-      nodeBackend: 'error',
-      rustVerifier: 'error',
-      swissBank: 'error',
-    };
-
-    const currentHost = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
-
-    // 1. 探测 Node.js 后端服务
-    try {
-      const apiUrl = import.meta.env.VITE_API_URL || `http://${currentHost}:3001`;
-      const res = await fetch(`${apiUrl}/api/health`);
-      if (res.ok) {
-        newStatus.nodeBackend = 'ok';
-        const data = await res.json();
-        if (data.provider && data.model) {
-          setActiveAI({ provider: data.provider, model: data.model });
-        }
-      }
-    } catch (e) {
-      newStatus.nodeBackend = 'error';
-    }
-
-    // 2. 探测 Rust Verifier 服务 (:7047)
-    try {
-      const res = await fetch(`http://${currentHost}:7047/health`);
-      if (res.ok) newStatus.rustVerifier = 'ok';
-    } catch (e) {
-      newStatus.rustVerifier = 'error';
-    }
-
-    // 3. 探测 SwissBank 网银服务 (:3000)
-    try {
-      const res = await fetch(`http://${currentHost}:3000/account`);
-      if (res.status === 200 || res.status === 404) newStatus.swissBank = 'ok';
-    } catch (e) {
-      newStatus.swissBank = 'error';
-    }
-
-    setStatus(newStatus);
-  };
-
-  useEffect(() => {
-    checkServices();
-    const interval = setInterval(checkServices, 5000); // 每 5 秒轮询检查一次状态
-    return () => clearInterval(interval);
-  }, []);
 
   const handleRateChange = (rate: number, selectedPair: string) => {
     setCurrentRate(rate);
@@ -306,92 +305,145 @@ export function App() {
         <h1 style={{ fontSize: '2.5rem', fontWeight: 800, margin: 0 }} className="gradient-text">
           FX Intel Exchange Platform
         </h1>
-        <p 
-          style={{ margin: 0, color: 'var(--text-muted)', maxWidth: '640px', fontSize: '1rem', lineHeight: '1.5' }}
-          dangerouslySetInnerHTML={{ __html: t.subtitle }}
-        />
       </header>
 
-      {/* 服务健康状态检查指示条 */}
-      <section
-        className="glass-card"
-        style={{
-          padding: '0.75rem 1.5rem',
-          display: 'flex',
-          justifyContent: 'space-around',
-          alignItems: 'center',
-          flexWrap: 'wrap',
-          gap: '1rem',
-          background: 'rgba(255,255,255,0.01)',
-          borderColor: 'rgba(255,255,255,0.04)',
-        }}
-      >
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem' }}>
-          <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: status.extension === 'ok' ? 'var(--success)' : 'var(--danger)' }} />
-          <span style={{ color: 'var(--text-muted)' }}>{t.extLabel}</span>
-          <strong style={{ color: status.extension === 'ok' ? 'var(--text-primary)' : 'var(--danger)' }}>
-            {status.extension === 'ok' ? t.extActive : t.extMissing}
-          </strong>
-        </div>
+      {/* 导航 Tab 切换栏 */}
+      <nav style={{
+        display: 'flex',
+        background: 'rgba(255, 255, 255, 0.02)',
+        border: '1px solid rgba(255, 255, 255, 0.05)',
+        borderRadius: '12px',
+        padding: '6px',
+        gap: '8px',
+        justifyContent: 'center',
+        flexWrap: 'wrap',
+        backdropFilter: 'blur(10px)'
+      }}>
+        {[
+          { key: 'trade', label: lang === 'zh' ? 'Swap & AI 分析' : 'Swap & AI', icon: <Bot size={16} /> },
+          { key: 'dashboard', label: lang === 'zh' ? '个人控制面板' : 'User Dashboard', icon: <User size={16} /> },
+          { key: 'merchant', label: lang === 'zh' ? '承兑商终端' : 'Merchant Terminal', icon: <Store size={16} /> },
+          { key: 'admin', label: lang === 'zh' ? '管理控制台' : 'Admin Console', icon: <ShieldAlert size={16} /> }
+        ].map((item) => {
+          const isActive = appTab === item.key;
+          return (
+            <button
+              key={item.key}
+              onClick={() => setAppTab(item.key as any)}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                background: isActive ? 'linear-gradient(135deg, #6366f1 0%, #a855f7 100%)' : 'transparent',
+                border: 'none',
+                padding: '8px 16px',
+                borderRadius: '8px',
+                color: isActive ? 'white' : 'var(--text-muted)',
+                cursor: 'pointer',
+                fontWeight: 600,
+                fontSize: '0.9rem',
+                transition: 'all 0.2s ease',
+                boxShadow: isActive ? '0 4px 12px rgba(99, 102, 241, 0.3)' : 'none'
+              }}
+              onMouseEnter={(e) => {
+                if (!isActive) e.currentTarget.style.color = 'var(--text-primary)';
+              }}
+              onMouseLeave={(e) => {
+                if (!isActive) e.currentTarget.style.color = 'var(--text-muted)';
+              }}
+            >
+              {item.icon}
+              <span>{item.label}</span>
+            </button>
+          );
+        })}
+      </nav>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem' }}>
-          <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: status.nodeBackend === 'ok' ? 'var(--success)' : 'var(--danger)' }} />
-          <Database size={14} color="var(--text-muted)" />
-          <span style={{ color: 'var(--text-muted)' }}>{t.dbLabel}</span>
-          <strong style={{ color: status.nodeBackend === 'ok' ? 'var(--text-primary)' : 'var(--danger)' }}>
-            {status.nodeBackend === 'ok' ? t.dbConnected : t.dbOffline}
-          </strong>
-        </div>
+      {/* 主面板内容渲染区 */}
+      {appTab === 'trade' && (
+        <main
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'minmax(320px, 1.2fr) minmax(320px, 1fr)',
+            gap: '2rem',
+            alignItems: 'start',
+          }}
+        >
+          {/* 左侧：FX Intel 决策看板 */}
+          <FxIntelPanel 
+            onRateChange={handleRateChange} 
+            lang={lang}
+            amount={amount}
+            setAmount={setAmount}
+            horizon={horizon}
+            setHorizon={setHorizon}
+            onAnalysisUpdate={setAnalysis}
+          />
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem' }}>
-          <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: status.rustVerifier === 'ok' ? 'var(--success)' : 'var(--warning)' }} />
-          <Server size={14} color="var(--text-muted)" />
-          <span style={{ color: 'var(--text-muted)' }}>{t.verifierLabel}</span>
-          <strong style={{ color: status.rustVerifier === 'ok' ? 'var(--text-primary)' : 'var(--warning)' }}>
-            {status.rustVerifier === 'ok' ? t.verifierOnline : t.verifierOffline}
-          </strong>
-        </div>
+          {/* 右侧：C2C 交易卡片 */}
+          <C2CTradeCard 
+            currentRate={currentRate} 
+            pair={pair} 
+            lang={lang} 
+            amount={amount}
+            setAmount={setAmount}
+            analysis={analysis}
+            account={account}
+            connectWallet={connectWallet}
+          />
+        </main>
+      )}
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem' }}>
-          <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: status.swissBank === 'ok' ? 'var(--success)' : 'var(--danger)' }} />
-          <Cpu size={14} color="var(--text-muted)" />
-          <span style={{ color: 'var(--text-muted)' }}>{t.bankLabel}</span>
-          <strong style={{ color: status.swissBank === 'ok' ? 'var(--text-primary)' : 'var(--danger)' }}>
-            {status.swissBank === 'ok' ? t.bankActive : t.bankOffline}
-          </strong>
-        </div>
-      </section>
-
-      {/* 主面板分栏区 */}
-      <main
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'minmax(320px, 1.2fr) minmax(320px, 1fr)',
-          gap: '2rem',
-          alignItems: 'start',
-        }}
-      >
-        {/* 左侧：FX Intel 决策看板 */}
-        <FxIntelPanel 
-          onRateChange={handleRateChange} 
+      {appTab === 'dashboard' && (
+        <DashboardPanel
+          account={account}
+          connectWallet={connectWallet}
           lang={lang}
-          amount={amount}
-          setAmount={setAmount}
-          horizon={horizon}
-          setHorizon={setHorizon}
-          onAnalysisUpdate={setAnalysis}
+          theme={theme}
+          USDT_ADDRESS={USDT_ADDRESS}
+          ESCROW_ADDRESS={ESCROW_ADDRESS}
+          ADMIN_ADDRESS={ADMIN_ADDRESS}
+          RISK_MANAGER_ADDRESS={RISK_MANAGER_ADDRESS}
+          BOND_VAULT_ADDRESS={BOND_VAULT_ADDRESS}
+          MERCHANT_ADDRESS={MERCHANT_ADDRESS}
+          targetChain={targetChain}
+          publicClient={publicClient}
         />
+      )}
 
-        {/* 右侧：C2C 交易卡片 */}
-        <C2CTradeCard 
-          currentRate={currentRate} 
-          pair={pair} 
-          lang={lang} 
-          amount={amount}
-          setAmount={setAmount}
-          analysis={analysis}
+      {appTab === 'merchant' && (
+        <MerchantPanel
+          account={account}
+          connectWallet={connectWallet}
+          lang={lang}
+          theme={theme}
+          USDT_ADDRESS={USDT_ADDRESS}
+          ESCROW_ADDRESS={ESCROW_ADDRESS}
+          ADMIN_ADDRESS={ADMIN_ADDRESS}
+          RISK_MANAGER_ADDRESS={RISK_MANAGER_ADDRESS}
+          BOND_VAULT_ADDRESS={BOND_VAULT_ADDRESS}
+          MERCHANT_ADDRESS={MERCHANT_ADDRESS}
+          targetChain={targetChain}
+          publicClient={publicClient}
         />
-      </main>
+      )}
+
+      {appTab === 'admin' && (
+        <AdminPanel
+          account={account}
+          connectWallet={connectWallet}
+          lang={lang}
+          theme={theme}
+          USDT_ADDRESS={USDT_ADDRESS}
+          ESCROW_ADDRESS={ESCROW_ADDRESS}
+          ADMIN_ADDRESS={ADMIN_ADDRESS}
+          RISK_MANAGER_ADDRESS={RISK_MANAGER_ADDRESS}
+          BOND_VAULT_ADDRESS={BOND_VAULT_ADDRESS}
+          MERCHANT_ADDRESS={MERCHANT_ADDRESS}
+          targetChain={targetChain}
+          publicClient={publicClient}
+        />
+      )}
 
       {/* 底部声明区域 */}
       <footer style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.5rem', opacity: 0.6, fontSize: '0.8rem', textAlign: 'center', padding: '1rem 0' }}>

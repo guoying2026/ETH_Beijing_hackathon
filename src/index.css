@@ -244,15 +244,15 @@ body.light-mode #root {
   color: #1f2937;
 }
 
-/* 覆盖白天模式下所有硬编码的白色/浅色字体颜色 */
-body.light-mode [style*="color: white"],
-body.light-mode [style*="color:white"],
-body.light-mode [style*="color: rgb(255, 255, 255)"],
-body.light-mode [style*="color:rgb(255, 255, 255)"],
-body.light-mode [style*="color: rgba(255, 255, 255"],
-body.light-mode [style*="color:rgba(255, 255, 255"],
-body.light-mode [style*="color: #fff"],
-body.light-mode [style*="color:#fff"] {
+/* 覆盖白天模式下所有硬编码的白色/浅色字体颜色（排除按钮，按钮需保持原有高对比度白字） */
+body.light-mode [style*="color: white"]:not(button):not(.btn-primary),
+body.light-mode [style*="color:white"]:not(button):not(.btn-primary),
+body.light-mode [style*="color: rgb(255, 255, 255)"]:not(button):not(.btn-primary),
+body.light-mode [style*="color:rgb(255, 255, 255)"]:not(button):not(.btn-primary),
+body.light-mode [style*="color: rgba(255, 255, 255"]:not(button):not(.btn-primary),
+body.light-mode [style*="color:rgba(255, 255, 255"]:not(button):not(.btn-primary),
+body.light-mode [style*="color: #fff"]:not(button):not(.btn-primary),
+body.light-mode [style*="color:#fff"]:not(button):not(.btn-primary) {
   color: #1f2937 !important;
 }
 

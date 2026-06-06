@@ -1,0 +1,50 @@
+{
+  "name": "contracts",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "npm run test:all",
+    "test:admin": "hardhat test test/C2CAdmin.ts --network hardhatMainnet",
+    "test:escrow": "hardhat test test/C2CEscrow.ts --network hardhatMainnet",
+    "test:alipay": "hardhat test test/AlipayPlatform.ts --network hardhatMainnet",
+    "test:wise": "hardhat test test/WisePlatform.ts --network hardhatMainnet",
+    "test:integration": "hardhat test test/Integration.ts --network hardhatMainnet",
+    "test:tlsn": "hardhat test test/TLSNVerifier.ts --network hardhatMainnet",
+    "test:rate": "hardhat test test/Rate.ts --network hardhatMainnet",
+    "test:cap": "hardhat test test/Cap.ts --network hardhatMainnet",
+    "test:hours": "hardhat test test/BusinessHours.ts --network hardhatMainnet",
+    "test:bond": "hardhat test test/Bond.ts --network hardhatMainnet",
+    "test:cleanup": "hardhat test test/CleanupExpired.ts --network hardhatMainnet",
+    "test:sweep": "hardhat test test/Sweep.ts --network hardhatMainnet",
+    "test:all": "hardhat test",
+    "node": "hardhat node --network hardhatMainnet",
+    "deploy:web": "hardhat run scripts/deploy-web.ts --network localhost",
+    "deploy:local": "hardhat run scripts/deploy-local.ts --network hardhatMainnet",
+    "deploy:demo": "hardhat run scripts/deploy-c2c-demo.ts --network localhost"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "devDependencies": {
+    "@nomicfoundation/hardhat-ignition": "^3.0.7",
+    "@nomicfoundation/hardhat-ignition-viem": "^3.1.0",
+    "@nomicfoundation/hardhat-keystore": "^3.0.5",
+    "@nomicfoundation/hardhat-network-helpers": "^3.0.4",
+    "@nomicfoundation/hardhat-node-test-runner": "^3.0.12",
+    "@nomicfoundation/hardhat-toolbox-viem": "^5.0.2",
+    "@nomicfoundation/hardhat-viem-assertions": "^3.0.7",
+    "@types/node": "^22.19.7",
+    "forge-std": "github:foundry-rs/forge-std#v1.9.4",
+    "hardhat": "^3.1.6",
+    "typescript": "~5.8.0",
+    "viem": "^2.47.5"
+  },
+  "dependencies": {
+    "@nomicfoundation/hardhat-verify": "^3.0.13",
+    "@nomicfoundation/hardhat-viem": "^3.0.4",
+    "@openzeppelin/contracts": "^5.4.0",
+    "@openzeppelin/contracts-upgradeable": "^5.4.0"
+  }
+}
