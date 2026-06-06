@@ -892,45 +892,54 @@ export function C2CTradeCard({ currentRate, pair, lang, amount, setAmount, analy
                   {lang === 'zh' ? '📊 Polymarket 宏观人群概率' : '📊 Crowdsourced Polymarket Odds'}
                 </span>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                  {polymarketData.map((ev: any, i: number) => (
-                    <a
-                      href={ev.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      key={ev.id || i}
-                      style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'center',
-                        padding: '10px 12px',
-                        borderRadius: '8px',
-                        background: 'rgba(99, 102, 241, 0.04)',
-                        border: '1px solid rgba(99, 102, 241, 0.1)',
-                        textDecoration: 'none',
-                        color: 'inherit',
-                        transition: 'all 0.2s',
-                        fontSize: '0.8rem'
-                      }}
-                      onMouseEnter={(e) => {
-                        e.currentTarget.style.background = 'rgba(99, 102, 241, 0.08)';
-                        e.currentTarget.style.borderColor = 'rgba(99, 102, 241, 0.2)';
-                      }}
-                      onMouseLeave={(e) => {
-                        e.currentTarget.style.background = 'rgba(99, 102, 241, 0.04)';
-                        e.currentTarget.style.borderColor = 'rgba(99, 102, 241, 0.1)';
-                      }}
-                    >
-                      <span style={{ color: 'var(--text-primary)', maxWidth: '80%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {ev.title}
-                      </span>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                        <span style={{ color: 'var(--primary)', fontWeight: 700 }}>
-                          {(ev.odds * 100).toFixed(0)}%
+                  {polymarketData.map((ev: any, i: number) => {
+                    const isMulti = ev.multiMarkets && ev.multiMarkets.length > 0;
+                    const tooltipText = isMulti
+                      ? ev.multiMarkets.map((m: any) => `${m.title}: ${(m.odds * 100).toFixed(0)}%`).join('\n')
+                      : undefined;
+                    return (
+                      <a
+                        href={ev.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        key={ev.id || i}
+                        title={tooltipText}
+                        style={{
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                          padding: '10px 12px',
+                          borderRadius: '8px',
+                          background: 'rgba(99, 102, 241, 0.04)',
+                          border: '1px solid rgba(99, 102, 241, 0.1)',
+                          textDecoration: 'none',
+                          color: 'inherit',
+                          transition: 'all 0.2s',
+                          fontSize: '0.8rem'
+                        }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.background = 'rgba(99, 102, 241, 0.08)';
+                          e.currentTarget.style.borderColor = 'rgba(99, 102, 241, 0.2)';
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.background = 'rgba(99, 102, 241, 0.04)';
+                          e.currentTarget.style.borderColor = 'rgba(99, 102, 241, 0.1)';
+                        }}
+                      >
+                        <span style={{ color: 'var(--text-primary)', maxWidth: '75%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {ev.title}
                         </span>
-                        <ExternalLink size={12} style={{ color: 'var(--text-muted)' }} />
-                      </div>
-                    </a>
-                  ))}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <span style={{ color: 'var(--primary)', fontWeight: 700 }}>
+                            {isMulti
+                              ? (lang === 'zh' ? '多市场' : 'Multi-market')
+                              : `${(ev.odds * 100).toFixed(0)}%`}
+                          </span>
+                          <ExternalLink size={12} style={{ color: 'var(--text-muted)' }} />
+                        </div>
+                      </a>
+                    );
+                  })}
                 </div>
               </div>
             )}

@@ -12,6 +12,7 @@ interface PolymarketEvent {
   title: string;
   odds: number;
   url: string;
+  multiMarkets?: Array<{ title: string; odds: number }>;
 }
 
 interface FxData {
@@ -941,39 +942,50 @@ export function FxIntelPanel({
             overflowY: 'auto',
             paddingRight: '4px'
           }}>
-            {data.polymarketData.map((event) => (
-              <a
-                href={event.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                key={event.id}
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  background: 'var(--bg-subcard)',
-                  border: '1px solid var(--border-subcard)',
-                  padding: '8px 12px',
-                  borderRadius: '8px',
-                  textDecoration: 'none',
-                  color: 'var(--text-primary)',
-                  fontSize: '0.85rem',
-                  transition: 'background 0.2s ease, border-color 0.2s ease',
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.background = 'var(--bg-subcard-hover)';
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = 'var(--bg-subcard)';
-                }}
-              >
-                <span style={{ color: 'var(--text-secondary)', paddingRight: '1rem' }}>{event.title}</span>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
-                  <span style={{ color: '#a78bfa', fontWeight: 700 }}>{(event.odds * 100).toFixed(0)}% {t.odds}</span>
-                  <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>↗</span>
-                </div>
-              </a>
-            ))}
+            {data.polymarketData.map((event) => {
+              const isMulti = event.multiMarkets && event.multiMarkets.length > 0;
+              const tooltipText = isMulti
+                ? event.multiMarkets.map((m: any) => `${m.title}: ${(m.odds * 100).toFixed(0)}%`).join('\n')
+                : undefined;
+              return (
+                <a
+                  href={event.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  key={event.id}
+                  title={tooltipText}
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    background: 'var(--bg-subcard)',
+                    border: '1px solid var(--border-subcard)',
+                    padding: '8px 12px',
+                    borderRadius: '8px',
+                    textDecoration: 'none',
+                    color: 'var(--text-primary)',
+                    fontSize: '0.85rem',
+                    transition: 'background 0.2s ease, border-color 0.2s ease',
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.background = 'var(--bg-subcard-hover)';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = 'var(--bg-subcard)';
+                  }}
+                >
+                  <span style={{ color: 'var(--text-secondary)', paddingRight: '1rem' }}>{event.title}</span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+                    <span style={{ color: '#a78bfa', fontWeight: 700 }}>
+                      {isMulti
+                        ? (lang === 'zh' ? '多市场' : 'Multi-market')
+                        : `${(event.odds * 100).toFixed(0)}% ${t.odds}`}
+                    </span>
+                    <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>↗</span>
+                  </div>
+                </a>
+              );
+            })}
           </div>
         </div>
       )}

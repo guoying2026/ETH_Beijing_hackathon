@@ -158,45 +158,70 @@ export async function syncPolymarketData() {
       for (const event of filteredEvents) {
         if (!event.markets || !Array.isArray(event.markets)) continue;
 
-        // 寻找该事件下第一个活跃的（未结束、正在交易的）盘口
-        const activeMarket = event.markets.find((m: any) => m.active && !m.closed);
-        if (!activeMarket) continue;
+        // 寻找所有活跃且未关闭的盘口
+        const activeMarkets = event.markets.filter((m: any) => m.active && !m.closed);
+        if (activeMarkets.length === 0) continue;
 
-        let prices: any[] = [];
-        if (typeof activeMarket.outcomePrices === 'string') {
-          try {
-            prices = JSON.parse(activeMarket.outcomePrices);
-          } catch (_) {
-            prices = [];
+        const isMultiMarket = activeMarkets.length > 1;
+        let multiMarketsData: any[] | null = null;
+        let odds = 0;
+        const activeMarket = activeMarkets[0];
+
+        if (isMultiMarket) {
+          multiMarketsData = activeMarkets.map((m: any) => {
+            let prices: any[] = [];
+            if (typeof m.outcomePrices === 'string') {
+              try {
+                prices = JSON.parse(m.outcomePrices);
+              } catch (_) {}
+            } else if (Array.isArray(m.outcomePrices)) {
+              prices = m.outcomePrices;
+            }
+            const yesPrice = prices.length > 0 ? parseFloat(prices[0]) : 0;
+            const optionTitle = m.groupItemTitle || m.question || '';
+            return {
+              title: optionTitle,
+              odds: Number(yesPrice.toFixed(2))
+            };
+          });
+          odds = 0; // 多市场用 0 占位
+        } else {
+          let prices: any[] = [];
+          if (typeof activeMarket.outcomePrices === 'string') {
+            try {
+              prices = JSON.parse(activeMarket.outcomePrices);
+            } catch (_) {}
+          } else if (Array.isArray(activeMarket.outcomePrices)) {
+            prices = activeMarket.outcomePrices;
           }
-        } else if (Array.isArray(activeMarket.outcomePrices)) {
-          prices = activeMarket.outcomePrices;
+          const yesPrice = prices.length > 0 ? parseFloat(prices[0]) : 0;
+          odds = Number(yesPrice.toFixed(2));
         }
 
-        const yesPrice = prices.length > 0 ? parseFloat(prices[0]) : null;
-        if (yesPrice !== null && !isNaN(yesPrice) && activeMarket.question && activeMarket.slug) {
+        if (activeMarket.slug) {
           const eventSlug = event.slug || '';
+          const activeMarketSlug = activeMarket.slug || '';
           const url = eventSlug
-            ? `https://polymarket.com/event/${eventSlug}?slug=${activeMarket.slug}`
-            : `https://polymarket.com/event/${activeMarket.slug}`;
+            ? `https://polymarket.com/event/${eventSlug}?slug=${activeMarketSlug}`
+            : `https://polymarket.com/event/${activeMarketSlug}`;
 
-          const id = `poly-${activeMarket.id || activeMarket.slug}`;
-          const title = activeMarket.question;
-          const odds = Number(yesPrice.toFixed(2));
+          const id = `poly-${activeMarket.id || activeMarketSlug}`;
+          const title = event.title || activeMarket.question || '';
 
           // 4. 生成 768 维向量并入库
           const embedding = await getEmbedding(title);
           const vectorStr = `[${embedding.join(',')}]`;
 
           await client.query(
-            `INSERT INTO polymarket_events (id, title, odds, url, embedding) 
-             VALUES ($1, $2, $3, $4, $5)
+            `INSERT INTO polymarket_events (id, title, odds, url, embedding, multi_markets) 
+             VALUES ($1, $2, $3, $4, $5, $6)
              ON CONFLICT (id) DO UPDATE SET 
                odds = EXCLUDED.odds,
                url = EXCLUDED.url,
                title = EXCLUDED.title,
+               multi_markets = EXCLUDED.multi_markets,
                updated_at = CURRENT_TIMESTAMP`,
-            [id, title, odds, url, vectorStr]
+            [id, title, odds, url, vectorStr, multiMarketsData ? JSON.stringify(multiMarketsData) : null]
           );
 
           insertedCount++;

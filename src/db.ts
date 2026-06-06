@@ -28,9 +28,16 @@ export async function initDatabase() {
         odds DOUBLE PRECISION NOT NULL,
         url TEXT,
         embedding vector(768),
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        multi_markets JSONB
       );
     `);
+    
+    // 确保已有表追加 multi_markets 字段
+    await client.query(`
+      ALTER TABLE polymarket_events ADD COLUMN IF NOT EXISTS multi_markets JSONB;
+    `);
+
     console.log('✅ Table "polymarket_events" is ready.');
   } catch (error) {
     console.error('❌ Database initialization failed:', error);
