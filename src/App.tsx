@@ -404,8 +404,12 @@ export function App() {
       <div 
         style={{
           width: '100%',
-          background: hasExtension ? 'rgba(16, 185, 129, 0.05)' : 'rgba(245, 158, 11, 0.08)',
-          border: hasExtension ? '1px solid rgba(16, 185, 129, 0.2)' : '1px solid rgba(245, 158, 11, 0.25)',
+          background: hasExtension 
+            ? (theme === 'light' ? '#ecfdf5' : 'rgba(16, 185, 129, 0.05)') 
+            : (theme === 'light' ? '#fffbeb' : 'rgba(245, 158, 11, 0.08)'),
+          border: hasExtension 
+            ? (theme === 'light' ? '1px solid #a7f3d0' : '1px solid rgba(16, 185, 129, 0.2)') 
+            : (theme === 'light' ? '1px solid #fde68a' : '1px solid rgba(245, 158, 11, 0.25)'),
           borderRadius: '12px',
           padding: '12px 18px',
           boxSizing: 'border-box',
@@ -414,15 +418,26 @@ export function App() {
           gap: '12px',
           fontSize: '0.9rem',
           transition: 'all 0.3s ease',
-          boxShadow: hasExtension ? '0 4px 20px rgba(16, 185, 129, 0.03)' : '0 4px 20px rgba(245, 158, 11, 0.05)',
+          boxShadow: hasExtension 
+            ? (theme === 'light' ? '0 4px 12px rgba(16, 185, 129, 0.08)' : '0 4px 20px rgba(16, 185, 129, 0.03)') 
+            : (theme === 'light' ? '0 4px 12px rgba(245, 158, 11, 0.08)' : '0 4px 20px rgba(245, 158, 11, 0.05)'),
         }}
       >
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: hasExtension ? 'var(--success)' : 'var(--warning)' }}>
+          <div 
+            style={{ 
+              display: 'flex', 
+              alignItems: 'center', 
+              gap: '8px', 
+              color: hasExtension 
+                ? (theme === 'light' ? '#065f46' : 'var(--success)') 
+                : (theme === 'light' ? '#92400e' : 'var(--warning)') 
+            }}
+          >
             {hasExtension ? (
-              <CheckCircle2 size={18} color="var(--success)" style={{ flexShrink: 0 }} />
+              <CheckCircle2 size={18} color={theme === 'light' ? '#059669' : 'var(--success)'} style={{ flexShrink: 0 }} />
             ) : (
-              <AlertTriangle size={18} color="var(--warning)" style={{ flexShrink: 0 }} />
+              <AlertTriangle size={18} color={theme === 'light' ? '#d97706' : 'var(--warning)'} style={{ flexShrink: 0 }} />
             )}
             <span style={{ fontWeight: 600 }}>
               {hasExtension ? (
@@ -466,18 +481,22 @@ export function App() {
                 display: 'inline-flex',
                 alignItems: 'center',
                 gap: '4px',
-                background: 'rgba(255, 255, 255, 0.05)',
-                border: '1px solid rgba(255, 255, 255, 0.1)',
+                background: theme === 'light' ? '#ffffff' : 'rgba(255, 255, 255, 0.05)',
+                border: theme === 'light' ? '1px solid #d1d5db' : '1px solid rgba(255, 255, 255, 0.1)',
                 padding: '6px 12px',
                 borderRadius: '20px',
-                color: 'inherit',
+                color: theme === 'light' ? '#374151' : 'inherit',
                 cursor: 'pointer',
                 fontSize: '0.8rem',
                 fontWeight: 600,
                 transition: 'all 0.2s ease',
               }}
-              onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255, 255, 255, 0.1)'}
-              onMouseLeave={(e) => e.currentTarget.style.background = 'rgba(255, 255, 255, 0.05)'}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = theme === 'light' ? '#f3f4f6' : 'rgba(255, 255, 255, 0.1)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = theme === 'light' ? '#ffffff' : 'rgba(255, 255, 255, 0.05)';
+              }}
             >
               <span>{lang === 'zh' ? '安装与配置指南' : 'Installation Guide'}</span>
               {showGuide ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
@@ -488,17 +507,26 @@ export function App() {
         {showGuide && (
           <div 
             style={{
-              background: 'rgba(0, 0, 0, 0.2)',
+              background: theme === 'light' ? '#ffffff' : 'rgba(0, 0, 0, 0.25)',
               borderRadius: '8px',
               padding: '14px',
-              border: '1px solid rgba(255, 255, 255, 0.05)',
+              border: theme === 'light' ? '1px solid #e5e7eb' : '1px solid rgba(255, 255, 255, 0.05)',
               display: 'flex',
               flexDirection: 'column',
               gap: '12px',
               lineHeight: '1.6',
+              boxShadow: theme === 'light' ? '0 4px 15px rgba(0, 0, 0, 0.05)' : 'none',
             }}
           >
-            <div style={{ fontWeight: 700, fontSize: '0.95rem', borderBottom: '1px solid rgba(255, 255, 255, 0.08)', paddingBottom: '6px', color: 'var(--text-highlight)' }}>
+            <div 
+              style={{ 
+                fontWeight: 700, 
+                fontSize: '0.95rem', 
+                borderBottom: theme === 'light' ? '1px solid #e5e7eb' : '1px solid rgba(255, 255, 255, 0.08)', 
+                paddingBottom: '6px', 
+                color: theme === 'light' ? '#1f2937' : 'var(--text-highlight)' 
+              }}
+            >
               {lang === 'zh' ? '🛠️ 极简手动安装说明' : '🛠️ Simple Manual Installation Instructions'}
             </div>
             
@@ -506,7 +534,7 @@ export function App() {
               <div style={{ display: 'flex', gap: '8px' }}>
                 <div style={{ width: '22px', height: '22px', borderRadius: '50%', background: 'var(--primary)', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '0.75rem', flexShrink: 0 }}>1</div>
                 <div>
-                  <div style={{ fontWeight: 600, fontSize: '0.85rem' }}>{lang === 'zh' ? '下载扩展包' : 'Download Extension'}</div>
+                  <div style={{ fontWeight: 600, fontSize: '0.85rem', color: 'var(--text-primary)' }}>{lang === 'zh' ? '下载扩展包' : 'Download Extension'}</div>
                   <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
                     {lang === 'zh' ? '点击上方下载按钮获取 zip 压缩包，您可尝试直接拖拽加载，若不支持则需在本地解压。' : 'Click the download button above to get the zip file. You can try dragging to install, or extract it if unsupported.'}
                   </div>
@@ -515,12 +543,12 @@ export function App() {
               <div style={{ display: 'flex', gap: '8px' }}>
                 <div style={{ width: '22px', height: '22px', borderRadius: '50%', background: 'var(--primary)', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '0.75rem', flexShrink: 0 }}>2</div>
                 <div>
-                  <div style={{ fontWeight: 600, fontSize: '0.85rem' }}>{lang === 'zh' ? '进入 Chrome 扩展管理' : 'Open Extensions Page'}</div>
+                  <div style={{ fontWeight: 600, fontSize: '0.85rem', color: 'var(--text-primary)' }}>{lang === 'zh' ? '进入 Chrome 扩展管理' : 'Open Extensions Page'}</div>
                   <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
                     {lang === 'zh' ? (
-                      <span>打开 Chrome 浏览器，访问 <a href="chrome://extensions/" onClick={handleCopyExtensionsUrl} style={{ textDecoration: 'underline', color: 'var(--primary)', cursor: 'pointer' }}>chrome://extensions/</a>。</span>
+                      <span>打开 Chrome 浏览器，访问 <a href="chrome://extensions/" onClick={handleCopyExtensionsUrl} style={{ textDecoration: 'underline', color: theme === 'light' ? '#4f46e5' : 'var(--primary)', cursor: 'pointer', fontWeight: 600 }}>chrome://extensions/</a>。</span>
                     ) : (
-                      <span>Go to <a href="chrome://extensions/" onClick={handleCopyExtensionsUrl} style={{ textDecoration: 'underline', color: 'var(--primary)', cursor: 'pointer' }}>chrome://extensions/</a> in your Chrome browser.</span>
+                      <span>Go to <a href="chrome://extensions/" onClick={handleCopyExtensionsUrl} style={{ textDecoration: 'underline', color: theme === 'light' ? '#4f46e5' : 'var(--primary)', cursor: 'pointer', fontWeight: 600 }}>chrome://extensions/</a> in your Chrome browser.</span>
                     )}
                   </div>
                 </div>
@@ -528,7 +556,7 @@ export function App() {
               <div style={{ display: 'flex', gap: '8px' }}>
                 <div style={{ width: '22px', height: '22px', borderRadius: '50%', background: 'var(--primary)', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '0.75rem', flexShrink: 0 }}>3</div>
                 <div>
-                  <div style={{ fontWeight: 600, fontSize: '0.85rem' }}>{lang === 'zh' ? '启用“开发者模式”' : 'Enable Developer Mode'}</div>
+                  <div style={{ fontWeight: 600, fontSize: '0.85rem', color: 'var(--text-primary)' }}>{lang === 'zh' ? '启用“开发者模式”' : 'Enable Developer Mode'}</div>
                   <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
                     {lang === 'zh' ? '在扩展管理页面右上角，将“开发者模式”开关打开。' : 'In the upper-right corner of the page, switch the "Developer mode" toggle on.'}
                   </div>
@@ -537,7 +565,7 @@ export function App() {
               <div style={{ display: 'flex', gap: '8px' }}>
                 <div style={{ width: '22px', height: '22px', borderRadius: '50%', background: 'var(--primary)', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '0.75rem', flexShrink: 0 }}>4</div>
                 <div>
-                  <div style={{ fontWeight: 600, fontSize: '0.85rem' }}>{lang === 'zh' ? '快速导入扩展' : 'Load Extension'}</div>
+                  <div style={{ fontWeight: 600, fontSize: '0.85rem', color: 'var(--text-primary)' }}>{lang === 'zh' ? '快速导入扩展' : 'Load Extension'}</div>
                   <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
                     {lang === 'zh' ? '直接将下载的 .zip 拖拽到本扩展管理页内快速安装；若拖拽报错，请点击“加载已解压的扩展程序”选择第1步解压的文件夹。' : 'Drag the .zip file directly into this extensions page to install. If it fails, click "Load unpacked" and select the extracted folder.'}
                   </div>
@@ -545,7 +573,19 @@ export function App() {
               </div>
             </div>
             
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'rgba(99, 102, 241, 0.05)', border: '1px solid rgba(99, 102, 241, 0.1)', padding: '8px 12px', borderRadius: '6px', fontSize: '0.8rem', color: 'var(--text-highlight)' }}>
+            <div 
+              style={{ 
+                display: 'flex', 
+                alignItems: 'center', 
+                gap: '6px', 
+                background: theme === 'light' ? '#eef2ff' : 'rgba(99, 102, 241, 0.05)', 
+                border: theme === 'light' ? '1px solid #dbeafe' : '1px solid rgba(99, 102, 241, 0.1)', 
+                padding: '8px 12px', 
+                borderRadius: '6px', 
+                fontSize: '0.8rem', 
+                color: theme === 'light' ? '#1e40af' : 'var(--text-highlight)' 
+              }}
+            >
               <HelpCircle size={14} style={{ flexShrink: 0 }} />
               <span>
                 {lang === 'zh' ? (
