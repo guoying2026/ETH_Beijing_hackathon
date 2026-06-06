@@ -534,9 +534,9 @@ export function App() {
               <div style={{ display: 'flex', gap: '8px' }}>
                 <div className="step-badge-circle" style={{ width: '22px', height: '22px', borderRadius: '50%', background: 'var(--primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '0.75rem', flexShrink: 0 }}>1</div>
                 <div>
-                  <div style={{ fontWeight: 600, fontSize: '0.85rem', color: 'var(--text-primary)' }}>{lang === 'zh' ? '下载扩展包' : 'Download Extension'}</div>
+                  <div style={{ fontWeight: 600, fontSize: '0.85rem', color: 'var(--text-primary)' }}>{lang === 'zh' ? '下载并解压扩展包' : 'Download & Extract'}</div>
                   <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                    {lang === 'zh' ? '点击上方下载按钮获取 zip 压缩包，您可尝试直接拖拽加载，若不支持则需在本地解压。' : 'Click the download button above to get the zip file. You can try dragging to install, or extract it if unsupported.'}
+                    {lang === 'zh' ? '点击上方下载 zip 压缩包，下载完成后必须在本地进行解压（建议解压到独立文件夹中）。' : 'Click download above to get the zip file. Be sure to extract it locally (recommended into a dedicated folder).'}
                   </div>
                 </div>
               </div>
@@ -565,9 +565,9 @@ export function App() {
               <div style={{ display: 'flex', gap: '8px' }}>
                 <div className="step-badge-circle" style={{ width: '22px', height: '22px', borderRadius: '50%', background: 'var(--primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '0.75rem', flexShrink: 0 }}>4</div>
                 <div>
-                  <div style={{ fontWeight: 600, fontSize: '0.85rem', color: 'var(--text-primary)' }}>{lang === 'zh' ? '快速导入扩展' : 'Load Extension'}</div>
+                  <div style={{ fontWeight: 600, fontSize: '0.85rem', color: 'var(--text-primary)' }}>{lang === 'zh' ? '加载解压扩展' : 'Load Unpacked'}</div>
                   <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                    {lang === 'zh' ? '直接将下载的 .zip 拖拽到本扩展管理页内快速安装；若拖拽报错，请点击“加载已解压的扩展程序”选择第1步解压的文件夹。' : 'Drag the .zip file directly into this extensions page to install. If it fails, click "Load unpacked" and select the extracted folder.'}
+                    {lang === 'zh' ? '点击左上角“加载已解压的扩展程序”按钮，选择您在第1步中解压好的文件夹；亦可尝试直接拖拽 zip 包加载。' : 'Click "Load unpacked" on the top-left and select the extracted folder from Step 1; you can also try dragging the zip file.'}
                   </div>
                 </div>
               </div>
