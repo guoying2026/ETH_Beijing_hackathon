@@ -52,6 +52,16 @@ export async function initDatabase() {
       );
     `);
 
+    // 4. 创建承兑商申请入驻表
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS acceptors (
+        address VARCHAR(255) PRIMARY KEY,
+        status VARCHAR(50) NOT NULL DEFAULT 'pending',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
     console.log('✅ Tables are ready.');
   } catch (error) {
     console.error('❌ Database initialization failed:', error);

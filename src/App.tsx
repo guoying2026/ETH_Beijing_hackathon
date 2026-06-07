@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { FxIntelPanel } from './components/FxIntelPanel';
 import { C2CTradeCard } from './components/C2CTradeCard';
 import { DashboardPanel } from './components/DashboardPanel';
@@ -79,14 +79,27 @@ export function App() {
   }, []);
 
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [toastType, setToastType] = useState<'success' | 'warning'>('success');
+  const [toastTimeoutId, setToastTimeoutId] = useState<number | null>(null);
+
+  const showToast = useCallback((msg: string, type: 'success' | 'warning' = 'success') => {
+    setToastMessage(msg);
+    setToastType(type);
+    
+    if (toastTimeoutId) {
+      clearTimeout(toastTimeoutId);
+    }
+    
+    const id = window.setTimeout(() => {
+      setToastMessage(null);
+    }, 3000);
+    setToastTimeoutId(id);
+  }, [toastTimeoutId]);
 
   const handleCopyExtensionsUrl = (e: React.MouseEvent) => {
     e.preventDefault();
     navigator.clipboard.writeText("chrome://extensions/");
-    setToastMessage(lang === 'zh' ? "📋 已复制扩展页地址！请粘贴到新标签页打开" : "📋 Copied! Paste into a new tab to open.");
-    setTimeout(() => {
-      setToastMessage(null);
-    }, 2000);
+    showToast(lang === 'zh' ? "📋 已复制扩展页地址！请粘贴到新标签页打开" : "📋 Copied! Paste into a new tab to open.", 'success');
   };
 
   const handleRecheckExtension = () => {
@@ -145,7 +158,7 @@ export function App() {
         console.error(err);
       }
     } else {
-      alert(lang === 'zh' ? '未检测到 MetaMask 钱包插件！' : 'MetaMask not detected!');
+      showToast(lang === 'zh' ? '未检测到 MetaMask 钱包插件！' : 'MetaMask not detected!', 'warning');
     }
   };
 
@@ -459,6 +472,17 @@ export function App() {
               <a 
                 href="/zkTLS-extension.zip" 
                 download="zkTLS-extension.zip"
+                onClick={(e) => {
+                  e.preventDefault();
+                  // 附加一个随机时间戳，规避浏览器强缓存
+                  const downloadUrl = `/zkTLS-extension.zip?t=${Date.now()}`;
+                  const a = document.createElement('a');
+                  a.href = downloadUrl;
+                  a.download = 'zkTLS-extension.zip';
+                  document.body.appendChild(a);
+                  a.click();
+                  document.body.removeChild(a);
+                }}
                 style={{
                   display: 'inline-flex',
                   alignItems: 'center',
@@ -702,9 +726,8 @@ export function App() {
             onRateChange={handleRateChange} 
             lang={lang}
             amount={amount}
-            setAmount={setAmount}
             horizon={horizon}
-            setHorizon={setHorizon}
+            pair={pair}
             onAnalysisUpdate={setAnalysis}
           />
 
@@ -712,9 +735,12 @@ export function App() {
           <C2CTradeCard 
             currentRate={currentRate} 
             pair={pair} 
+            setPair={setPair}
             lang={lang} 
             amount={amount}
             setAmount={setAmount}
+            horizon={horizon}
+            setHorizon={setHorizon}
             analysis={analysis}
             account={account}
             connectWallet={connectWallet}
@@ -905,23 +931,38 @@ export function App() {
           top: '24px',
           left: '50%',
           transform: 'translateX(-50%)',
-          background: 'rgba(15, 12, 38, 0.95)',
-          backdropFilter: 'blur(16px)',
-          border: '1px solid rgba(16, 185, 129, 0.3)',
-          color: '#34d399',
-          padding: '12px 24px',
-          borderRadius: '30px',
-          boxShadow: '0 8px 32px 0 rgba(0, 0, 0, 0.4)',
+          background: 'linear-gradient(135deg, rgba(24, 24, 37, 0.95) 0%, rgba(15, 15, 26, 0.98) 100%)',
+          backdropFilter: 'blur(20px)',
+          borderLeft: toastType === 'success' ? '4px solid #10b981' : '4px solid #f59e0b',
+          borderTop: '1px solid rgba(255, 255, 255, 0.08)',
+          borderRight: '1px solid rgba(255, 255, 255, 0.08)',
+          borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
+          color: '#ffffff',
+          padding: '12px 20px',
+          borderRadius: '12px',
+          boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.3), 0 10px 10px -5px rgba(0, 0, 0, 0.3)',
           fontSize: '0.85rem',
           fontWeight: 600,
-          zIndex: 1100,
+          zIndex: 9999,
           pointerEvents: 'none',
           animation: 'slideDownFadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1)',
           display: 'flex',
           alignItems: 'center',
-          gap: '8px',
+          gap: '10px',
         }}>
-          <span>{toastMessage}</span>
+          {toastType === 'success' ? (
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+              <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+              <polyline points="22 4 12 14.01 9 11.01" />
+            </svg>
+          ) : (
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+              <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+              <line x1="12" y1="9" x2="12" y2="13" />
+              <line x1="12" y1="17" x2="12.01" y2="17" />
+            </svg>
+          )}
+          <span style={{ letterSpacing: '0.01em', lineHeight: '1.4' }}>{toastMessage}</span>
         </div>
       )}
     </div>

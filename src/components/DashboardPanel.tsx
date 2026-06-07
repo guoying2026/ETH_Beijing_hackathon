@@ -59,6 +59,25 @@ export function DashboardPanel({
   targetChain,
   publicClient
 }: DashboardPanelProps) {
+  // Toast state
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [toastType, setToastType] = useState<'success' | 'warning'>('success');
+  const [toastTimeoutId, setToastTimeoutId] = useState<number | null>(null);
+
+  const showToast = useCallback((msg: string, type: 'success' | 'warning' = 'success') => {
+    setToastMessage(msg);
+    setToastType(type);
+    
+    if (toastTimeoutId) {
+      clearTimeout(toastTimeoutId);
+    }
+    
+    const id = window.setTimeout(() => {
+      setToastMessage(null);
+    }, 3000);
+    setToastTimeoutId(id);
+  }, [toastTimeoutId]);
+
   // Wallet state
   const [ethBalance, setEthBalance] = useState('0');
   const [usdtBalance, setUsdtBalance] = useState('0');
@@ -140,9 +159,16 @@ export function DashboardPanel({
       }) as any;
       const isWiseBound = Boolean(wiseBinding && (wiseBinding.isSet ?? wiseBinding[2]));
       setWiseBound(isWiseBound);
-      if (isWiseBound && MERCHANT_ADDRESS && account.toLowerCase() === MERCHANT_ADDRESS.toLowerCase()) {
-        setWiseName('KAI XU LOOI');
-        setWiseHandle('@kaixul1');
+      if (isWiseBound) {
+        if (MERCHANT_ADDRESS && account.toLowerCase() === MERCHANT_ADDRESS.toLowerCase()) {
+          setWiseName('KAI XU LOOI');
+          setWiseHandle('@kaixul1');
+        } else {
+          const storedWiseName = localStorage.getItem(`wise_name_${account.toLowerCase()}`);
+          const storedWiseHandle = localStorage.getItem(`wise_handle_${account.toLowerCase()}`);
+          setWiseName(storedWiseName || 'San Zhang');
+          setWiseHandle(storedWiseHandle || 'user@wise.com');
+        }
       }
 
       const alipayBinding = await publicClient.readContract({
@@ -151,7 +177,14 @@ export function DashboardPanel({
         functionName: 'getPlatformBinding',
         args: [account, alipayId]
       }) as any;
-      setAlipayBound(Boolean(alipayBinding && (alipayBinding.isSet ?? alipayBinding[2])));
+      const isAlipayBound = Boolean(alipayBinding && (alipayBinding.isSet ?? alipayBinding[2]));
+      setAlipayBound(isAlipayBound);
+      if (isAlipayBound) {
+        const storedAlipayName = localStorage.getItem(`alipay_name_${account.toLowerCase()}`);
+        const storedAlipayHandle = localStorage.getItem(`alipay_handle_${account.toLowerCase()}`);
+        setAlipayName(storedAlipayName || '张三');
+        setAlipayHandle(storedAlipayHandle || '13900000000');
+      }
     } catch (err) {
       console.error('Error fetching dashboard user data:', err);
     }
@@ -224,7 +257,7 @@ export function DashboardPanel({
   const handleBind = async (platformName: 'Wise' | 'Alipay', name: string, handle: string, setIsBinding: (v: boolean) => void) => {
     if (!account) return;
     if (!name || !handle) {
-      alert(lang === 'zh' ? '请填写姓名和账户标识！' : 'Please fill name and account handle!');
+      showToast(lang === 'zh' ? '请填写姓名和账户标识！' : 'Please fill name and account handle!', 'warning');
       return;
     }
 
@@ -252,11 +285,16 @@ export function DashboardPanel({
       });
 
       await publicClient.waitForTransactionReceipt({ hash });
-      alert(lang === 'zh' ? `${platformName} 身份绑定成功！` : `${platformName} platform binding set successfully!`);
+      
+      // Save locally to show plain text to user
+      localStorage.setItem(`${platformName.toLowerCase()}_name_${account.toLowerCase()}`, name);
+      localStorage.setItem(`${platformName.toLowerCase()}_handle_${account.toLowerCase()}`, handle);
+      
+      showToast(lang === 'zh' ? `${platformName} 身份绑定成功！` : `${platformName} platform binding set successfully!`, 'success');
       fetchBalancesAndReputation();
     } catch (e: any) {
       console.error(e);
-      alert(e.message || e);
+      showToast(e.message || String(e), 'warning');
     } finally {
       setIsBinding(false);
     }
@@ -292,11 +330,11 @@ export function DashboardPanel({
         args: [account, mintAmount],
       });
       await publicClient.waitForTransactionReceipt({ hash });
-      alert(lang === 'zh' ? '成功获得 1000 测试 USDT！' : 'Successfully received 1000 test USDT!');
+      showToast(lang === 'zh' ? '成功获得 1000 测试 USDT！' : 'Successfully received 1000 test USDT!', 'success');
       fetchBalancesAndReputation();
     } catch (e: any) {
       console.error(e);
-      alert(e.message || e);
+      showToast(e.message || String(e), 'warning');
     }
   };
 
@@ -485,6 +523,39 @@ export function DashboardPanel({
     }
   };
 
+  const renderErrorMessage = (msg: string) => {
+    if (!msg) return null;
+    if (msg.includes('未检测到') || msg.includes('not detected') || msg.includes('TLSNotary')) {
+      const isZh = lang === 'zh';
+      return (
+        <span>
+          {isZh 
+            ? '未检测到 zkTLS 浏览器扩展插件！请先在页面顶部下载并安装 Chrome 扩展程序，以便生成转账的 zkTLS 零知识证明来释放托管资金。您也可以在此处 '
+            : 'zkTLS browser extension not detected! Please download and install the Chrome extension from the top of the page, or click here to '
+          }
+          <a
+            href="/zkTLS-extension.zip"
+            style={{ color: '#f87171', textDecoration: 'underline', fontWeight: 600, cursor: 'pointer' }}
+            onClick={(e) => {
+              e.preventDefault();
+              const downloadUrl = `/zkTLS-extension.zip?t=${Date.now()}`;
+              const a = document.createElement('a');
+              a.href = downloadUrl;
+              a.download = 'zkTLS-extension.zip';
+              document.body.appendChild(a);
+              a.click();
+              document.body.removeChild(a);
+            }}
+          >
+            {isZh ? '点击下载最新扩展包 (ZIP)' : 'download extension zip'}
+          </a>
+          {isZh ? '。' : ' directly.'}
+        </span>
+      );
+    }
+    return msg;
+  };
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', width: '100%' }}>
       
@@ -605,9 +676,27 @@ export function DashboardPanel({
             <div style={{ background: 'rgba(255,255,255,0.01)', border: '1px solid rgba(255,255,255,0.04)', borderRadius: '12px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <span style={{ fontWeight: 700, fontSize: '0.9rem', color: 'var(--text-primary)' }}>Wise Account</span>
-                <span style={{ fontSize: '0.75rem', fontWeight: 600, color: wiseBound ? 'var(--success)' : 'var(--danger)', background: wiseBound ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)', padding: '2px 8px', borderRadius: '4px' }}>
-                  {wiseBound ? (lang === 'zh' ? '已绑定' : 'Bound') : (lang === 'zh' ? '未绑定' : 'Unbound')}
-                </span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  {wiseBound && (
+                    <button 
+                      onClick={() => setWiseBound(false)} 
+                      style={{ 
+                        background: 'none', 
+                        border: 'none', 
+                        color: 'var(--primary)', 
+                        fontSize: '0.7rem', 
+                        cursor: 'pointer', 
+                        padding: '0 4px',
+                        textDecoration: 'underline'
+                      }}
+                    >
+                      {lang === 'zh' ? '修改' : 'Modify'}
+                    </button>
+                  )}
+                  <span style={{ fontSize: '0.75rem', fontWeight: 600, color: wiseBound ? 'var(--success)' : 'var(--danger)', background: wiseBound ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)', padding: '2px 8px', borderRadius: '4px' }}>
+                    {wiseBound ? (lang === 'zh' ? '已绑定' : 'Bound') : (lang === 'zh' ? '未绑定' : 'Unbound')}
+                  </span>
+                </div>
               </div>
               <input
                 type="text"
@@ -616,6 +705,7 @@ export function DashboardPanel({
                 onChange={(e) => setWiseName(e.target.value)}
                 className="input-field"
                 style={{ fontSize: '0.8rem', padding: '8px 12px' }}
+                disabled={wiseBound}
               />
               <input
                 type="text"
@@ -624,24 +714,58 @@ export function DashboardPanel({
                 onChange={(e) => setWiseHandle(e.target.value)}
                 className="input-field"
                 style={{ fontSize: '0.8rem', padding: '8px 12px' }}
+                disabled={wiseBound}
               />
-              <button
-                onClick={() => handleBind('Wise', wiseName, wiseHandle, setIsBindingWise)}
-                disabled={isBindingWise}
-                className="btn-primary"
-                style={{ width: '100%', padding: '6px', fontSize: '0.8rem' }}
-              >
-                {isBindingWise ? (lang === 'zh' ? '绑定中...' : 'Binding...') : (lang === 'zh' ? '提交 Wise 身份绑定' : 'Bind Wise')}
-              </button>
+              {!wiseBound ? (
+                <button
+                  onClick={() => handleBind('Wise', wiseName, wiseHandle, setIsBindingWise)}
+                  disabled={isBindingWise}
+                  className="btn-primary"
+                  style={{ width: '100%', padding: '6px', fontSize: '0.8rem' }}
+                >
+                  {isBindingWise ? (lang === 'zh' ? '绑定中...' : 'Binding...') : (lang === 'zh' ? '提交 Wise 身份绑定' : 'Bind Wise')}
+                </button>
+              ) : (
+                <div style={{
+                  textAlign: 'center',
+                  padding: '6px',
+                  fontSize: '0.8rem',
+                  color: 'var(--success)',
+                  background: 'rgba(16,185,129,0.08)',
+                  borderRadius: '6px',
+                  border: '1px solid rgba(16,185,129,0.2)',
+                  fontWeight: 600
+                }}>
+                  {lang === 'zh' ? '✓ 身份已安全绑定至智能合约' : '✓ Identity secured on-chain'}
+                </div>
+              )}
             </div>
 
             {/* Alipay bind */}
             <div style={{ background: 'rgba(255,255,255,0.01)', border: '1px solid rgba(255,255,255,0.04)', borderRadius: '12px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <span style={{ fontWeight: 700, fontSize: '0.9rem', color: 'var(--text-primary)' }}>Alipay Account</span>
-                <span style={{ fontSize: '0.75rem', fontWeight: 600, color: alipayBound ? 'var(--success)' : 'var(--danger)', background: alipayBound ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)', padding: '2px 8px', borderRadius: '4px' }}>
-                  {alipayBound ? (lang === 'zh' ? '已绑定' : 'Bound') : (lang === 'zh' ? '未绑定' : 'Unbound')}
-                </span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  {alipayBound && (
+                    <button 
+                      onClick={() => setAlipayBound(false)} 
+                      style={{ 
+                        background: 'none', 
+                        border: 'none', 
+                        color: 'var(--primary)', 
+                        fontSize: '0.7rem', 
+                        cursor: 'pointer', 
+                        padding: '0 4px',
+                        textDecoration: 'underline'
+                      }}
+                    >
+                      {lang === 'zh' ? '修改' : 'Modify'}
+                    </button>
+                  )}
+                  <span style={{ fontSize: '0.75rem', fontWeight: 600, color: alipayBound ? 'var(--success)' : 'var(--danger)', background: alipayBound ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)', padding: '2px 8px', borderRadius: '4px' }}>
+                    {alipayBound ? (lang === 'zh' ? '已绑定' : 'Bound') : (lang === 'zh' ? '未绑定' : 'Unbound')}
+                  </span>
+                </div>
               </div>
               <input
                 type="text"
@@ -650,6 +774,7 @@ export function DashboardPanel({
                 onChange={(e) => setAlipayName(e.target.value)}
                 className="input-field"
                 style={{ fontSize: '0.8rem', padding: '8px 12px' }}
+                disabled={alipayBound}
               />
               <input
                 type="text"
@@ -658,15 +783,31 @@ export function DashboardPanel({
                 onChange={(e) => setAlipayHandle(e.target.value)}
                 className="input-field"
                 style={{ fontSize: '0.8rem', padding: '8px 12px' }}
+                disabled={alipayBound}
               />
-              <button
-                onClick={() => handleBind('Alipay', alipayName, alipayHandle, setIsBindingAlipay)}
-                disabled={isBindingAlipay}
-                className="btn-primary"
-                style={{ width: '100%', padding: '6px', fontSize: '0.8rem' }}
-              >
-                {isBindingAlipay ? (lang === 'zh' ? '绑定中...' : 'Binding...') : (lang === 'zh' ? '提交 Alipay 身份绑定' : 'Bind Alipay')}
-              </button>
+              {!alipayBound ? (
+                <button
+                  onClick={() => handleBind('Alipay', alipayName, alipayHandle, setIsBindingAlipay)}
+                  disabled={isBindingAlipay}
+                  className="btn-primary"
+                  style={{ width: '100%', padding: '6px', fontSize: '0.8rem' }}
+                >
+                  {isBindingAlipay ? (lang === 'zh' ? '绑定中...' : 'Binding...') : (lang === 'zh' ? '提交 Alipay 身份绑定' : 'Bind Alipay')}
+                </button>
+              ) : (
+                <div style={{
+                  textAlign: 'center',
+                  padding: '6px',
+                  fontSize: '0.8rem',
+                  color: 'var(--success)',
+                  background: 'rgba(16,185,129,0.08)',
+                  borderRadius: '6px',
+                  border: '1px solid rgba(16,185,129,0.2)',
+                  fontWeight: 600
+                }}>
+                  {lang === 'zh' ? '✓ 身份已安全绑定至智能合约' : '✓ Identity secured on-chain'}
+                </div>
+              )}
             </div>
           </div>
         ) : (
@@ -707,7 +848,7 @@ export function DashboardPanel({
           <div style={{ padding: '40px 0', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.85rem', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
             <span>{lang === 'zh' ? '当前没有进行中的活跃 C2C 订单。' : 'No active trade escrows found.'}</span>
             <span style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>
-              {lang === 'zh' ? '您可以在“极速换汇”中发起一笔新订单。' : 'You can start a new trade swap in the first tab.'}
+              {lang === 'zh' ? '您可以在“承兑集市”中选择商家发起新订单。' : 'You can select a merchant in the P2P Market to start a new order.'}
             </span>
           </div>
         ) : (
@@ -883,7 +1024,7 @@ export function DashboardPanel({
                             <ShieldAlert size={16} />
                             <strong>{lang === 'zh' ? '证明生成/结算失败' : 'Verification Failed'}</strong>
                           </div>
-                          <p style={{ margin: 0, fontSize: '0.75rem', color: 'var(--text-muted)' }}>{errorMsg}</p>
+                          <p style={{ margin: 0, fontSize: '0.75rem', color: 'var(--text-muted)' }}>{renderErrorMessage(errorMsg)}</p>
                           <button
                             onClick={() => setProvingStatus('idle')}
                             className="btn-primary"
@@ -912,6 +1053,48 @@ export function DashboardPanel({
           animation: spin 1s linear infinite;
         }
       `}</style>
+
+      {/* Global Minimalist Toast */}
+      {toastMessage && (
+        <div style={{
+          position: 'fixed',
+          top: '24px',
+          left: '50%',
+          transform: 'translateX(-50%)',
+          background: 'linear-gradient(135deg, rgba(24, 24, 37, 0.95) 0%, rgba(15, 15, 26, 0.98) 100%)',
+          backdropFilter: 'blur(20px)',
+          borderLeft: toastType === 'success' ? '4px solid #10b981' : '4px solid #f59e0b',
+          borderTop: '1px solid rgba(255, 255, 255, 0.08)',
+          borderRight: '1px solid rgba(255, 255, 255, 0.08)',
+          borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
+          color: '#ffffff',
+          padding: '12px 20px',
+          borderRadius: '12px',
+          boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.3), 0 10px 10px -5px rgba(0, 0, 0, 0.3)',
+          fontSize: '0.85rem',
+          fontWeight: 600,
+          zIndex: 9999,
+          pointerEvents: 'none',
+          animation: 'slideDownFadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '10px',
+        }}>
+          {toastType === 'success' ? (
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+              <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+              <polyline points="22 4 12 14.01 9 11.01" />
+            </svg>
+          ) : (
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+              <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+              <line x1="12" y1="9" x2="12" y2="13" />
+              <line x1="12" y1="17" x2="12.01" y2="17" />
+            </svg>
+          )}
+          <span style={{ letterSpacing: '0.01em', lineHeight: '1.4' }}>{toastMessage}</span>
+        </div>
+      )}
     </div>
   );
 }

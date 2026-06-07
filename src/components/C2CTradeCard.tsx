@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { Landmark, ArrowRight, ShieldCheck, CheckCircle, RotateCw, AlertCircle, RefreshCw, X, ExternalLink } from 'lucide-react';
 import { createPublicClient, createWalletClient, custom, http, formatUnits, parseUnits, keccak256, stringToBytes, encodePacked, parseEventLogs } from 'viem';
@@ -11,7 +11,7 @@ const getEthereum = () => typeof window !== 'undefined' ? (window as any).ethere
 const ADMIN_ADDRESS = (import.meta.env.VITE_C2C_ADMIN_ADDRESS || '').toLowerCase() as `0x${string}`;
 const ESCROW_ADDRESS = (import.meta.env.VITE_C2C_ESCROW_ADDRESS || '').toLowerCase() as `0x${string}`;
 const RISK_MANAGER_ADDRESS = (import.meta.env.VITE_C2C_RISK_MANAGER_ADDRESS || '').toLowerCase() as `0x${string}`;
-const BOND_VAULT_ADDRESS = (import.meta.env.VITE_C2C_BOND_VAULT_ADDRESS || '').toLowerCase() as `0x${string}`;
+// const BOND_VAULT_ADDRESS = (import.meta.env.VITE_C2C_BOND_VAULT_ADDRESS || '').toLowerCase() as `0x${string}`;
 const USDT_ADDRESS = (import.meta.env.VITE_USDT_ADDRESS || '').toLowerCase() as `0x${string}`;
 const MERCHANT_ADDRESS = (import.meta.env.VITE_MERCHANT_ADDRESS || '').toLowerCase() as `0x${string}`;
 
@@ -28,9 +28,12 @@ const publicClient = createPublicClient({
 interface Props {
   currentRate: number;
   pair: string;
+  setPair: (p: string) => void;
   lang: 'zh' | 'en';
   amount: string;
   setAmount: (amt: string) => void;
+  horizon: string;
+  setHorizon: (hor: string) => void;
   analysis: any;
   account: `0x${string}` | null;
   connectWallet: () => Promise<void>;
@@ -134,8 +137,27 @@ const T = {
   }
 };
 
-export function C2CTradeCard({ currentRate, pair, lang, amount, setAmount, analysis, account, connectWallet }: Props) {
-  const [activeTab, setActiveTab] = useState<Tab>('express');
+export function C2CTradeCard({ currentRate, pair, setPair, lang, amount, setAmount, horizon, setHorizon, analysis, account, connectWallet }: Props) {
+  // Toast state
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [toastType, setToastType] = useState<'success' | 'warning'>('success');
+  const [toastTimeoutId, setToastTimeoutId] = useState<number | null>(null);
+
+  const showToast = useCallback((msg: string, type: 'success' | 'warning' = 'success') => {
+    setToastMessage(msg);
+    setToastType(type);
+    
+    if (toastTimeoutId) {
+      clearTimeout(toastTimeoutId);
+    }
+    
+    const id = window.setTimeout(() => {
+      setToastMessage(null);
+    }, 3000);
+    setToastTimeoutId(id);
+  }, [toastTimeoutId]);
+
+  const [activeTab] = useState<Tab>('p2p');
   const [step, setStep] = useState<TradeStep>('input');
   const [showDecisionModal, setShowDecisionModal] = useState(false);
   
@@ -145,6 +167,39 @@ export function C2CTradeCard({ currentRate, pair, lang, amount, setAmount, analy
   const [receiveAmount, setReceiveAmount] = useState('');
   
   const t = T[lang];
+
+  const renderErrorMessage = (msg: string) => {
+    if (!msg) return null;
+    if (msg.includes('/zkTLS-extension.zip')) {
+      const isZh = lang === 'zh';
+      return (
+        <span>
+          {isZh 
+            ? '未检测到 zkTLS 浏览器扩展插件！请先在页面顶部下载并安装 Chrome 扩展程序，以便生成转账的 zkTLS 零知识证明来释放托管资金。您也可以在此处 '
+            : 'zkTLS browser extension not detected! Please download and install the Chrome extension from the top of the page, or click here to '
+          }
+          <a
+            href="/zkTLS-extension.zip"
+            style={{ color: '#f87171', textDecoration: 'underline', fontWeight: 600, cursor: 'pointer' }}
+            onClick={(e) => {
+              e.preventDefault();
+              const downloadUrl = `/zkTLS-extension.zip?t=${Date.now()}`;
+              const a = document.createElement('a');
+              a.href = downloadUrl;
+              a.download = 'zkTLS-extension.zip';
+              document.body.appendChild(a);
+              a.click();
+              document.body.removeChild(a);
+            }}
+          >
+            {isZh ? '点击下载最新扩展包 (ZIP)' : 'download extension zip'}
+          </a>
+          {isZh ? '。' : ' directly.'}
+        </span>
+      );
+    }
+    return msg;
+  };
 
   // 兼容直接传入的 analysis 和包裹在整个 json 中的数据
   const parsedAnalysis = analysis?.analysis ? analysis.analysis : (analysis?.signal ? analysis : null);
@@ -396,6 +451,7 @@ export function C2CTradeCard({ currentRate, pair, lang, amount, setAmount, analy
       productId: p.productId,
       rate: p.rate,
       limit: `0 - ${limitMax}`,
+      availableUsdt: formatUnits(p.availableAmount, 18),
       orders: 1845,
       completion: '99.8%',
       isOpen: p.isOpen,
@@ -403,8 +459,16 @@ export function C2CTradeCard({ currentRate, pair, lang, amount, setAmount, analy
     };
   });
 
-  // 直接使用从链上成功读取到的商户列表，不带 mock 兜底
-  const p2pMerchants = resolvedP2pMerchants;
+  // 根据右侧选择的计价法币 (quote) 动态过滤匹配的承兑商支付渠道
+  const p2pMerchants = resolvedP2pMerchants.filter((merchant) => {
+    if (quote === 'MYR') {
+      return merchant.platformName.toLowerCase() === 'wise';
+    }
+    if (quote === 'CNY') {
+      return merchant.platformName.toLowerCase() === 'alipay';
+    }
+    return true;
+  });
 
   // 动态更新初始消息
   useEffect(() => {
@@ -482,7 +546,7 @@ export function C2CTradeCard({ currentRate, pair, lang, amount, setAmount, analy
   }, [requestId, lang]);
 
   // 真实唤起浏览器插件生成网银付款证明
-  const handleVerifyZkTls = async (isMock: boolean = false) => {
+  const handleVerifyZkTls = async () => {
     const logToAgent = (msg: string) => {
       window.dispatchEvent(new CustomEvent('agent-log', { detail: msg }));
     };
@@ -502,35 +566,6 @@ export function C2CTradeCard({ currentRate, pair, lang, amount, setAmount, analy
         console.warn('Failed to save long term memory:', e);
       }
     };
-
-    if (isMock) {
-      logToAgent('🔐 准备启动 zkTLS 虚拟公证证明流程...');
-      setStep('proving');
-      setProveProgress(10);
-      setProveMessage(t.msgMockConnecting);
-      logToAgent('🌐 正在模拟与瑞士网银建立加密 TLS 链接 (MPC 模式)...');
-      
-      await new Promise(r => setTimeout(r, 1200));
-      setProveProgress(45);
-      setProveMessage(t.msgMockRedacting);
-      logToAgent('⚡ 正在抓取账单详情，智能脱敏隐私字段，遮蔽密码与账号余额...');
-      
-      await new Promise(r => setTimeout(r, 1500));
-      setProveProgress(80);
-      setProveMessage(t.msgMockProving);
-      logToAgent('🛡️ 正在生成不可伪造的零知识密码学证明 (zk-Proof)...');
-      
-      await new Promise(r => setTimeout(r, 1200));
-      setProveProgress(100);
-      setProveMessage(t.msgMockSuccess);
-      logToAgent('✅ zkTLS 证明生成与本地公证验证成功！');
-      logToAgent(`🎉 智能合约自动释放资金托管：已将 ${receiveAmount} ${quote} 解锁并划转至您的钱包。`);
-      await saveTransactionMemory();
-      
-      await new Promise(r => setTimeout(r, 1000));
-      setStep('success');
-      return;
-    }
 
     logToAgent('🔐 准备启动真实的 zkTLS 公证证明流程...');
     if (!account) {
@@ -561,24 +596,24 @@ export function C2CTradeCard({ currentRate, pair, lang, amount, setAmount, analy
       const platformName = selectedProduct ? selectedProduct.platformName : (pair.includes('CNY') ? 'Alipay' : 'Wise');
       const platformId = selectedProduct ? selectedProduct.platformId : (keccak256(stringToBytes(platformName.toLowerCase())) as `0x${string}`);
 
-      logToAgent(lang === 'zh' ? '📡 步骤 1/4: 检查并授权保证金库 (approve if needed)...' : '📡 Step 1/4: Check and approve BondVault...');
+      logToAgent(lang === 'zh' ? '📡 步骤 1/4: 检查并授权托管合约 (approve if needed)...' : '📡 Step 1/4: Check and approve C2CEscrow...');
       const estimatedBond = (amountBig * BigInt(requiredBondBps)) / 10000n;
       
       const currentAllowance = await publicClient.readContract({
         address: USDT_ADDRESS,
         abi: ERC20_ABI,
         functionName: 'allowance',
-        args: [account, BOND_VAULT_ADDRESS],
+        args: [account, ESCROW_ADDRESS],
       }) as bigint;
 
       if (currentAllowance < estimatedBond) {
-        logToAgent(lang === 'zh' ? '✍️ 请在钱包中确认授权保证金交易...' : '✍️ Please confirm USDT approval in wallet...');
+        logToAgent(lang === 'zh' ? '✍️ 请在钱包中确认授权托管交易...' : '✍️ Please confirm USDT approval in wallet...');
         const MAX_UINT256 = (2n ** 256n) - 1n;
         const approveTx = await walletClient.writeContract({
           address: USDT_ADDRESS,
           abi: ERC20_ABI,
           functionName: 'approve',
-          args: [BOND_VAULT_ADDRESS, MAX_UINT256],
+          args: [ESCROW_ADDRESS, MAX_UINT256],
         });
         logToAgent(lang === 'zh' ? '⌛ 等待授权交易确认...' : '⌛ Waiting for approval transaction confirmation...');
         await publicClient.waitForTransactionReceipt({ hash: approveTx });
@@ -946,10 +981,10 @@ export function C2CTradeCard({ currentRate, pair, lang, amount, setAmount, analy
                         functionName: 'mint',
                         args: [account, mintAmount],
                       });
-                      alert(lang === 'zh' ? `领水交易已发送，获得 1000 USDT\nHash: ${txHash}` : `Faucet tx sent, received 1000 USDT\nHash: ${txHash}`);
+                      showToast(lang === 'zh' ? `领水交易已发送，获得 1000 USDT\nHash: ${txHash}` : `Faucet tx sent, received 1000 USDT\nHash: ${txHash}`, 'success');
                     } catch (e: any) {
                       console.error(e);
-                      alert(e.message || e);
+                      showToast(e.message || String(e), 'warning');
                     }
                   }}
                   style={{
@@ -986,41 +1021,46 @@ export function C2CTradeCard({ currentRate, pair, lang, amount, setAmount, analy
         )}
       </div>
 
-      {/* 交易模式 Tab */}
+      {/* 参数输入与货币对切换配置网格 */}
       {step === 'input' && (
-        <div style={{ display: 'flex', background: 'var(--bg-subcard)', border: '1px solid var(--border-subcard)', borderRadius: '10px', padding: '4px' }}>
-          <button
-            style={{
-              flex: 1,
-              background: activeTab === 'express' ? 'var(--bg-subcard-hover)' : 'transparent',
-              border: 'none',
-              color: activeTab === 'express' ? 'var(--text-primary)' : 'var(--text-muted)',
-              padding: '8px',
-              borderRadius: '8px',
-              cursor: 'pointer',
-              fontWeight: 600,
-              fontSize: '0.9rem'
-            }}
-            onClick={() => setActiveTab('express')}
-          >
-            {t.expressTab}
-          </button>
-          <button
-            style={{
-              flex: 1,
-              background: activeTab === 'p2p' ? 'var(--bg-subcard-hover)' : 'transparent',
-              border: 'none',
-              color: activeTab === 'p2p' ? 'var(--text-primary)' : 'var(--text-muted)',
-              padding: '8px',
-              borderRadius: '8px',
-              cursor: 'pointer',
-              fontWeight: 600,
-              fontSize: '0.9rem'
-            }}
-            onClick={() => setActiveTab('p2p')}
-          >
-            {t.p2pTab}
-          </button>
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))',
+            gap: '1rem',
+            background: 'rgba(255,255,255,0.01)',
+            borderRadius: '12px',
+            padding: '1rem',
+            border: '1px solid rgba(255,255,255,0.04)',
+          }}
+        >
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: 600 }}>{lang === 'zh' ? '选择分析货币对' : 'Currency Pair'}</label>
+            <select value={pair} onChange={(e) => setPair(e.target.value)} className="select-field" style={{ width: '100%' }}>
+              <option value="USD/CNY">{lang === 'zh' ? 'USD/CNY (美元/人民币)' : 'USD/CNY (USD/CNY)'}</option>
+              <option value="USD/MYR">{lang === 'zh' ? 'USD/MYR (美元/马币)' : 'USD/MYR (USD/MYR)'}</option>
+            </select>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: 600 }}>{lang === 'zh' ? '计划兑换金额' : 'Exchange Amount'}</label>
+            <div style={{ position: 'relative', width: '100%' }}>
+              <input 
+                type="number" 
+                value={amount} 
+                onChange={(e) => setAmount(e.target.value)} 
+                className="input-field" 
+                style={{ padding: '0.5rem', fontSize: '0.9rem', width: '100%', boxSizing: 'border-box' }}
+              />
+            </div>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: 600 }}>{lang === 'zh' ? '观察周期偏好' : 'Horizon Preference'}</label>
+            <select value={horizon} onChange={(e) => setHorizon(e.target.value)} className="select-field" style={{ width: '100%' }}>
+              <option value="1d">{lang === 'zh' ? '1天 (短期偏好)' : '1 Day (Short)'}</option>
+              <option value="3d">{lang === 'zh' ? '3天 (均衡偏好)' : '3 Days (Balanced)'}</option>
+              <option value="7d">{lang === 'zh' ? '7天 (耐心偏好)' : '7 Days (Patient)'}</option>
+            </select>
+          </div>
         </div>
       )}
 
@@ -1199,20 +1239,45 @@ export function C2CTradeCard({ currentRate, pair, lang, amount, setAmount, analy
                 }}
               >
                 <div>
-                  <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{merchant.name}</div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{merchant.name}</div>
+                    <span style={{
+                      fontSize: '0.68rem',
+                      padding: '1px 5px',
+                      borderRadius: '4px',
+                      fontWeight: 600,
+                      background: merchant.isOpen ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+                      color: merchant.isOpen ? 'var(--success)' : 'var(--danger)',
+                      border: merchant.isOpen ? '1px solid rgba(16, 185, 129, 0.15)' : '1px solid rgba(239, 68, 68, 0.15)'
+                    }}>
+                      {merchant.isOpen ? (lang === 'zh' ? '商家在线' : 'Online') : (lang === 'zh' ? '商家下线' : 'Offline')}
+                    </span>
+                  </div>
                   <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
                     {t.orders}: {merchant.orders} | {t.completion}: {merchant.completion}
                   </div>
                   <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
                     {t.limit}: {merchant.limit} {base}
                   </div>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                    {lang === 'zh' ? '可兑储备：' : 'Available Reserve: '}{Number(merchant.availableUsdt).toFixed(2)} USDT
+                  </div>
                 </div>
                 <div style={{ textAlign: 'right' }}>
                   <div style={{ fontSize: '1.2rem', fontWeight: 800, color: '#34d399' }}>
                     {merchant.rate.toFixed(4)}
                   </div>
+                  <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', marginTop: '2px', marginBottom: '6px' }}>
+                    1 {base} = {merchant.rate.toFixed(4)} {quote}
+                  </div>
                   <button
+                    disabled={!merchant.isOpen}
                     onClick={() => {
+                      if (!merchant.isOpen) return;
+                      if (!sendAmount || parseFloat(sendAmount) <= 0 || isNaN(parseFloat(sendAmount))) {
+                        showToast(lang === 'zh' ? '请输入有效的兑换金额！' : 'Please enter a valid exchange amount!', 'warning');
+                        return;
+                      }
                       const prod = contractProducts.find(p => p.productId === merchant.productId);
                       const resolvedProduct = prod ? {
                         platformName: prod.platformName,
@@ -1232,18 +1297,19 @@ export function C2CTradeCard({ currentRate, pair, lang, amount, setAmount, analy
                       setProveMessage(t.initMessage);
                     }}
                     style={{
-                      background: 'var(--primary)',
+                      background: merchant.isOpen ? 'var(--primary)' : 'rgba(255,255,255,0.06)',
                       border: 'none',
-                      color: 'white',
-                      padding: '4px 10px',
-                      borderRadius: '6px',
+                      color: merchant.isOpen ? 'white' : 'var(--text-muted)',
+                      padding: '5px 12px',
+                      borderRadius: '8px',
                       fontSize: '0.8rem',
                       fontWeight: 600,
-                      cursor: 'pointer',
-                      marginTop: '4px'
+                      cursor: merchant.isOpen ? 'pointer' : 'not-allowed',
+                      marginTop: '4px',
+                      transition: 'all 0.2s'
                     }}
                   >
-                    {t.tradeBtn}
+                    {merchant.isOpen ? (lang === 'zh' ? '交易' : 'Trade') : (lang === 'zh' ? '商家不在线' : 'Offline')}
                   </button>
                 </div>
               </div>
@@ -1283,31 +1349,14 @@ export function C2CTradeCard({ currentRate, pair, lang, amount, setAmount, analy
           {errorMsg && (
             <div style={{ background: 'rgba(239,68,68,0.05)', border: '1px solid rgba(239,68,68,0.1)', padding: '10px', borderRadius: '8px', color: '#f87171', fontSize: '0.8rem' }}>
               <div style={{ fontWeight: 600, marginBottom: '4px' }}>Error:</div>
-              {errorMsg}
+              {renderErrorMessage(errorMsg)}
             </div>
           )}
 
-          <div style={{ display: 'flex', gap: '0.75rem' }}>
-            <button onClick={() => handleVerifyZkTls(false)} className="btn-primary" style={{ flex: 2 }}>
-              <ShieldCheck size={18} />
-              {t.verifyBtn}
-            </button>
-            <button
-              onClick={() => handleVerifyZkTls(true)}
-              style={{
-                flex: 1,
-                background: 'rgba(255,255,255,0.05)',
-                border: '1px solid rgba(255,255,255,0.1)',
-                color: 'var(--text-primary)',
-                borderRadius: '10px',
-                cursor: 'pointer',
-                fontWeight: 600,
-                fontSize: '0.85rem'
-              }}
-            >
-              {t.mockBtn}
-            </button>
-          </div>
+          <button onClick={() => handleVerifyZkTls()} className="btn-primary" style={{ width: '100%' }}>
+            <ShieldCheck size={18} />
+            {t.verifyBtn}
+          </button>
 
           <button
             onClick={() => setStep('input')}
@@ -1368,12 +1417,12 @@ export function C2CTradeCard({ currentRate, pair, lang, amount, setAmount, analy
           <div>
             <h3 style={{ margin: '0 0 8px 0', color: 'var(--text-primary)' }}>{t.failTitle}</h3>
             <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', lineHeight: '1.4', margin: 0 }}>
-              {errorMsg || t.errVerificationFail}
+              {renderErrorMessage(errorMsg || t.errVerificationFail)}
             </p>
           </div>
           
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', width: '100%', marginTop: '1rem' }}>
-            <button onClick={() => handleVerifyZkTls(false)} className="btn-primary" style={{ width: '100%' }}>
+            <button onClick={() => handleVerifyZkTls()} className="btn-primary" style={{ width: '100%' }}>
               <RefreshCw size={16} />
               {t.retryBtn}
             </button>
@@ -1699,6 +1748,47 @@ export function C2CTradeCard({ currentRate, pair, lang, amount, setAmount, analy
           </div>
         </div>,
         document.body
+      )}
+      {/* Global Minimalist Toast */}
+      {toastMessage && (
+        <div style={{
+          position: 'fixed',
+          top: '24px',
+          left: '50%',
+          transform: 'translateX(-50%)',
+          background: 'linear-gradient(135deg, rgba(24, 24, 37, 0.95) 0%, rgba(15, 15, 26, 0.98) 100%)',
+          backdropFilter: 'blur(20px)',
+          borderLeft: toastType === 'success' ? '4px solid #10b981' : '4px solid #f59e0b',
+          borderTop: '1px solid rgba(255, 255, 255, 0.08)',
+          borderRight: '1px solid rgba(255, 255, 255, 0.08)',
+          borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
+          color: '#ffffff',
+          padding: '12px 20px',
+          borderRadius: '12px',
+          boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.3), 0 10px 10px -5px rgba(0, 0, 0, 0.3)',
+          fontSize: '0.85rem',
+          fontWeight: 600,
+          zIndex: 9999,
+          pointerEvents: 'none',
+          animation: 'slideDownFadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '10px',
+        }}>
+          {toastType === 'success' ? (
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+              <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+              <polyline points="22 4 12 14.01 9 11.01" />
+            </svg>
+          ) : (
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+              <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+              <line x1="12" y1="9" x2="12" y2="13" />
+              <line x1="12" y1="17" x2="12.01" y2="17" />
+            </svg>
+          )}
+          <span style={{ letterSpacing: '0.01em', lineHeight: '1.4' }}>{toastMessage}</span>
+        </div>
       )}
     </div>
   );

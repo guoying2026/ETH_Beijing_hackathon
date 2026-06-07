@@ -594,7 +594,4 @@ function main() {
     ]
   );
 }
-const wise_plugin = { main, onClick, expandUI, minimizeUI, config };
-export {
-  wise_plugin as default
-};
+export default { main, onClick, expandUI, minimizeUI, config };

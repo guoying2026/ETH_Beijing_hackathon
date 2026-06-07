@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Store, FileText, CheckCircle, Loader2, Plus, ShieldCheck, ChevronRight, Award } from 'lucide-react';
+import { Store, FileText, CheckCircle, Loader2, Plus, ShieldCheck, ChevronRight, Award, AlertCircle, Clock, RefreshCw } from 'lucide-react';
 import { createWalletClient, custom, keccak256, stringToBytes, parseUnits, formatUnits } from 'viem';
 import { C2C_ADMIN_ABI, C2C_ESCROW_ABI, C2C_BOND_VAULT_ABI, ERC20_ABI } from '../lib/contractAbi';
 
@@ -85,6 +85,7 @@ export function MerchantPanel({
   account,
   connectWallet,
   lang,
+  theme,
   USDT_ADDRESS,
   ESCROW_ADDRESS,
   ADMIN_ADDRESS,
@@ -92,19 +93,39 @@ export function MerchantPanel({
   targetChain,
   publicClient
 }: MerchantPanelProps) {
+  // Toast state
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [toastType, setToastType] = useState<'success' | 'warning'>('success');
+  const [toastTimeoutId, setToastTimeoutId] = useState<number | null>(null);
+
+  const showToast = useCallback((msg: string, type: 'success' | 'warning' = 'success') => {
+    setToastMessage(msg);
+    setToastType(type);
+    
+    if (toastTimeoutId) {
+      clearTimeout(toastTimeoutId);
+    }
+    
+    const id = window.setTimeout(() => {
+      setToastMessage(null);
+    }, 3000);
+    setToastTimeoutId(id);
+  }, [toastTimeoutId]);
+
   const [isMerchant, setIsMerchant] = useState(false);
+  const [usdtBalance, setUsdtBalance] = useState('0');
   const [loading, setLoading] = useState(true);
   const [claimableBond, setClaimableBond] = useState('0');
   const [isClaiming, setIsClaiming] = useState(false);
 
   // Register state
-  const [registerStake, setRegisterStake] = useState('100');
-  const [isRegistering, setIsRegistering] = useState(false);
+  const [isApplying, setIsApplying] = useState(false);
+  const [applicationStatus, setApplicationStatus] = useState<'none' | 'pending' | 'approved' | 'loading'>('loading');
 
   // Listed products
   const [products, setProducts] = useState<ProductDetail[]>([]);
   const [loadingProducts, setLoadingProducts] = useState(false);
-  const [expandedProduct, setExpandedProduct] = useState<string | null>(null);
+  const [collapsedProducts, setCollapsedProducts] = useState<Set<string>>(new Set());
 
   // Add Product State
   const [newAssetType, setNewAssetType] = useState<number>(0); // 0 Sell Crypto, 1 Sell Fiat
@@ -114,11 +135,44 @@ export function MerchantPanel({
   const [newPlatform, setNewPlatform] = useState<'wise' | 'alipay'>('wise');
   const [isListing, setIsListing] = useState(false);
 
+  const renderErrorMessage = (msg: string) => {
+    if (!msg) return null;
+    if (msg.includes('/zkTLS-extension.zip')) {
+      const isZh = lang === 'zh';
+      return (
+        <span>
+          {isZh 
+            ? '未检测到 zkTLS 浏览器插件！请先在页面顶部下载安装扩展插件。您也可以在此处 '
+            : 'zkTLS browser extension not detected! Please download and install from the top, or click here to '
+          }
+          <a
+            href="/zkTLS-extension.zip"
+            style={{ color: '#f87171', textDecoration: 'underline', fontWeight: 600, cursor: 'pointer' }}
+            onClick={(e) => {
+              e.preventDefault();
+              const downloadUrl = `/zkTLS-extension.zip?t=${Date.now()}`;
+              const a = document.createElement('a');
+              a.href = downloadUrl;
+              a.download = 'zkTLS-extension.zip';
+              document.body.appendChild(a);
+              a.click();
+              document.body.removeChild(a);
+            }}
+          >
+            {isZh ? '点击下载最新扩展包 (ZIP)' : 'download extension zip'}
+          </a>
+          {isZh ? '。' : ' directly.'}
+        </span>
+      );
+    }
+    return msg;
+  };
+
   // Product management inline editing states
-  const [editRate, setEditRate] = useState('');
-  const [editOpenHour, setEditOpenHour] = useState('8');
-  const [editCloseHour, setEditCloseHour] = useState('22');
-  const [collateralDelta, setCollateralDelta] = useState('');
+  const [editRates, setEditRates] = useState<Record<string, string>>({});
+  const [editOpenHours, setEditOpenHours] = useState<Record<string, string>>({});
+  const [editCloseHours, setEditCloseHours] = useState<Record<string, string>>({});
+  const [collateralDeltas, setCollateralDeltas] = useState<Record<string, string>>({});
 
   // Merchant orders list
   const [orders, setOrders] = useState<MerchantOrder[]>([]);
@@ -134,24 +188,68 @@ export function MerchantPanel({
   const fetchMerchantStatus = useCallback(async () => {
     if (!account) {
       setLoading(false);
+      setApplicationStatus('none');
       return;
     }
     try {
-      const active = await publicClient.readContract({
-        address: ADMIN_ADDRESS,
-        abi: C2C_ADMIN_ABI,
-        functionName: 'isMerchantActive',
-        args: [account]
-      }) as boolean;
+      // 1. 先检查本地数据库状态
+      let dbStatus: 'none' | 'pending' | 'approved' = 'none';
+      try {
+        const res = await fetch(`/api/acceptors/status?address=${account}`);
+        if (res.ok) {
+          const data = await res.json();
+          dbStatus = data.status || 'none';
+        }
+      } catch (e) {
+        console.warn('⚠️ Querying backend acceptor status failed, falling back to smart contract check:', e);
+      }
+
+      let active = false;
+      if (dbStatus === 'approved') {
+        active = true;
+        setApplicationStatus('approved');
+      } else if (dbStatus === 'pending') {
+        active = false;
+        setApplicationStatus('pending');
+      } else {
+        // none 或者接口查询失败，fallback 检查智能合约
+        try {
+          active = await publicClient.readContract({
+            address: ADMIN_ADDRESS,
+            abi: C2C_ADMIN_ABI,
+            functionName: 'isMerchantActive',
+            args: [account]
+          }) as boolean;
+        } catch (contractErr) {
+          console.error('Contract isMerchantActive call failed:', contractErr);
+        }
+        setApplicationStatus(active ? 'approved' : 'none');
+      }
+
       setIsMerchant(active);
 
-      const claimable = await publicClient.readContract({
-        address: BOND_VAULT_ADDRESS,
-        abi: C2C_BOND_VAULT_ABI,
-        functionName: 'claimableBalance',
-        args: [account, USDT_ADDRESS]
-      }) as bigint;
-      setClaimableBond(formatUnits(claimable, 18));
+      // 2. 获取账户的 USDT 余额
+      try {
+        const usdtBal = await publicClient.readContract({
+          address: USDT_ADDRESS,
+          abi: ERC20_ABI,
+          functionName: 'balanceOf',
+          args: [account],
+        }) as bigint;
+        setUsdtBalance(formatUnits(usdtBal, 18));
+      } catch (balErr) {
+        console.error('Error fetching USDT balance in MerchantPanel:', balErr);
+      }
+
+      if (active) {
+        const claimable = await publicClient.readContract({
+          address: BOND_VAULT_ADDRESS,
+          abi: C2C_BOND_VAULT_ABI,
+          functionName: 'claimableBalance',
+          args: [account, USDT_ADDRESS]
+        }) as bigint;
+        setClaimableBond(formatUnits(claimable, 18));
+      }
     } catch (err) {
       console.error('Error fetching merchant status:', err);
     } finally {
@@ -362,86 +460,27 @@ export function MerchantPanel({
     }
   }, [isMerchant, fetchProducts, fetchOrders]);
 
-  const handleRegister = async () => {
+  const handleApplyAcceptor = async () => {
     if (!account) return;
-    setIsRegistering(true);
-    setErrorMsg('');
-    setProveProgress(10);
-    setProveMessage(lang === 'zh' ? '🔐 准备开始实名入驻验证...' : '🔐 Initializing KYC/KYB registration verification...');
+    setIsApplying(true);
     try {
-      const ethereum = getEthereum();
-      if (!ethereum) throw new Error('MetaMask not detected');
-      const walletClient = createWalletClient({
-        account,
-        chain: targetChain,
-        transport: custom(ethereum)
+      const res = await fetch('/api/acceptors/apply', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ address: account })
       });
-
-      // 1. Approve bond vault
-      setProveProgress(20);
-      setProveMessage(lang === 'zh' ? '⚙️ 正在授权质押基础保证金...' : '⚙️ Approving bond vault for collateral...');
-      const bondUnits = parseUnits(registerStake, 18);
-      const approveTx = await (walletClient as any).writeContract({
-        address: USDT_ADDRESS,
-        abi: ERC20_ABI,
-        functionName: 'approve',
-        args: [BOND_VAULT_ADDRESS, bondUnits]
-      });
-      await publicClient.waitForTransactionReceipt({ hash: approveTx });
-
-      // 2. Real zkTLS Registration Verification
-      if (!(window as any).tlsn) {
-        throw new Error(lang === 'zh' ? '未检测到 zkTLS 浏览器插件！请先在页面顶部下载并安装，或获取此处压缩包并在 Chrome 开发者模式中加载：/zkTLS-extension.zip' : 'zkTLS extension not detected! Please download from page top or get the zip directly and load unpacked in Chrome Developer mode: /zkTLS-extension.zip');
+      if (res.ok) {
+        showToast(lang === 'zh' ? '自愿入驻申请提交成功，正在等待超级管理员审核！' : 'Application submitted successfully! Waiting for super admin approval.', 'success');
+        fetchMerchantStatus();
+      } else {
+        const data = await res.json();
+        throw new Error(data.error || 'Failed to submit application');
       }
-
-      setProveProgress(40);
-      setProveMessage(lang === 'zh' ? '⚡ 正在加载支付宝 KYB 实名验证插件...' : '⚡ Loading Alipay KYB registration plugin...');
-
-      const pluginUrl = '/plugins/alipay.js';
-      const resPlugin = await fetch(pluginUrl);
-      if (!resPlugin.ok) throw new Error('Alipay plugin load failed');
-      let pluginCode = await resPlugin.text();
-
-      // For registration flow, we construct a dummy orderBindingHash placeholder
-      const orderBindingHash = '0x0000000000000000000000000000000000000000000000000000000000000000';
-      pluginCode = pluginCode
-        .replace(/"0x0000000000000000000000000000000000000000000000000000000000000001"/g, `"${orderBindingHash}"`)
-        .replace(/'0x0000000000000000000000000000000000000000000000000000000000000001'/g, `'${orderBindingHash}'`);
-
-      setProveProgress(60);
-      setProveMessage(lang === 'zh' ? '✍️ 请在浏览器插件弹窗中登录并完成实名公证...' : '✍️ Please log in and complete notary in extension window...');
-
-      const reqId = `merchant_reg_${Date.now()}`;
-      const resultStr = await (window as any).tlsn.execCode(pluginCode, {
-        requestId: reqId,
-        sessionData: { mode: 'Mpc' }
-      });
-
-      const parsedResult = JSON.parse(resultStr);
-      setProveProgress(80);
-      setProveMessage(lang === 'zh' ? '✅ zkTLS 实名证明生成成功！正在提交链上注册入驻...' : '✅ KYB proof generated! Submitting registration transaction...');
-
-      const proofObj = buildContractProofObj(parsedResult);
-
-      const regTx = await (walletClient as any).writeContract({
-        address: ADMIN_ADDRESS,
-        abi: C2C_ADMIN_ABI,
-        functionName: 'registerMerchant',
-        args: [proofObj]
-      });
-
-      await publicClient.waitForTransactionReceipt({ hash: regTx });
-      setProveProgress(100);
-      setProveMessage('');
-      alert(lang === 'zh' ? '商户资质已通过 zkTLS KYB 实名验证，入驻成功！' : 'Successfully registered as merchant with zkTLS KYB proof!');
-      fetchMerchantStatus();
     } catch (e: any) {
       console.error(e);
-      alert(e.message || e);
+      showToast(e.message || String(e), 'warning');
     } finally {
-      setIsRegistering(false);
-      setProveProgress(0);
-      setProveMessage('');
+      setIsApplying(false);
     }
   };
 
@@ -463,11 +502,11 @@ export function MerchantPanel({
         args: [USDT_ADDRESS]
       });
       await publicClient.waitForTransactionReceipt({ hash });
-      alert(lang === 'zh' ? '成功赎回质押保证金！' : 'Successfully claimed bond collateral!');
+      showToast(lang === 'zh' ? '成功赎回质押保证金！' : 'Successfully claimed bond collateral!', 'success');
       fetchMerchantStatus();
     } catch (e: any) {
       console.error(e);
-      alert(e.message || e);
+      showToast(e.message || String(e), 'warning');
     } finally {
       setIsClaiming(false);
     }
@@ -515,12 +554,13 @@ export function MerchantPanel({
       }
 
       await publicClient.waitForTransactionReceipt({ hash });
-      alert(lang === 'zh' ? '新换汇交易商品发布上架成功！' : 'New product listed successfully!');
+      showToast(lang === 'zh' ? '新换汇交易商品发布上架成功！' : 'New product listed successfully!', 'success');
       fetchProducts();
+      fetchMerchantStatus();
       setNewAmount('1000');
     } catch (e: any) {
       console.error(e);
-      alert(e.message || e);
+      showToast(e.message || String(e), 'warning');
     } finally {
       setIsListing(false);
     }
@@ -548,12 +588,14 @@ export function MerchantPanel({
       fetchProducts();
     } catch (e: any) {
       console.error(e);
-      alert(e.message || e);
+      showToast(e.message || String(e), 'warning');
     }
   };
 
   const handleUpdateRate = async (p: ProductDetail) => {
-    if (!account || !editRate) return;
+    const key = `${p.productId}_${p.assetType}`;
+    const rateValStr = editRates[key] !== undefined ? editRates[key] : p.rate.toString();
+    if (!account || !rateValStr) return;
     try {
       const ethereum = getEthereum();
       if (!ethereum) return;
@@ -563,7 +605,7 @@ export function MerchantPanel({
         transport: custom(ethereum)
       });
 
-      const rateVal = BigInt(Math.round(parseFloat(editRate) * 1e8));
+      const rateVal = BigInt(Math.round(parseFloat(rateValStr) * 1e8));
       const exp = BigInt(Math.floor(Date.now() / 1000) + 3600 * 24 * 7); // Valid for 7 days
 
       const hash = await (walletClient as any).writeContract({
@@ -574,15 +616,22 @@ export function MerchantPanel({
       });
       await publicClient.waitForTransactionReceipt({ hash });
       fetchProducts();
-      setEditRate('');
+      setEditRates(prev => {
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
     } catch (e: any) {
       console.error(e);
-      alert(e.message || e);
+      showToast(e.message || String(e), 'warning');
     }
   };
 
   const handleUpdateHours = async (p: ProductDetail) => {
     if (!account) return;
+    const key = `${p.productId}_${p.assetType}`;
+    const openH = editOpenHours[key] !== undefined ? editOpenHours[key] : '8';
+    const closeH = editCloseHours[key] !== undefined ? editCloseHours[key] : '22';
     try {
       const ethereum = getEthereum();
       if (!ethereum) return;
@@ -592,8 +641,8 @@ export function MerchantPanel({
         transport: custom(ethereum)
       });
 
-      const openSec = Number(editOpenHour) * 3600;
-      const closeSec = Number(editCloseHour) * 3600;
+      const openSec = Number(openH) * 3600;
+      const closeSec = Number(closeH) * 3600;
       const activeDays = 127; // Mon - Sun
 
       const hash = await (walletClient as any).writeContract({
@@ -606,7 +655,7 @@ export function MerchantPanel({
       fetchProducts();
     } catch (e: any) {
       console.error(e);
-      alert(e.message || e);
+      showToast(e.message || String(e), 'warning');
     }
   };
 
@@ -631,12 +680,14 @@ export function MerchantPanel({
       fetchProducts();
     } catch (e: any) {
       console.error(e);
-      alert(e.message || e);
+      showToast(e.message || String(e), 'warning');
     }
   };
 
   const handleAdjustCollateral = async (p: ProductDetail, add: boolean) => {
-    if (!account || !collateralDelta) return;
+    const key = `${p.productId}_${p.assetType}`;
+    const delta = collateralDeltas[key];
+    if (!account || !delta) return;
     try {
       const ethereum = getEthereum();
       if (!ethereum) return;
@@ -646,7 +697,7 @@ export function MerchantPanel({
         transport: custom(ethereum)
       });
 
-      const amountVal = parseUnits(collateralDelta, 18);
+      const amountVal = parseUnits(delta, 18);
 
       if (add) {
         // Approve USDT
@@ -668,10 +719,15 @@ export function MerchantPanel({
 
       await publicClient.waitForTransactionReceipt({ hash });
       fetchProducts();
-      setCollateralDelta('');
+      fetchMerchantStatus();
+      setCollateralDeltas(prev => {
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
     } catch (e: any) {
       console.error(e);
-      alert(e.message || e);
+      showToast(e.message || String(e), 'warning');
     }
   };
 
@@ -769,50 +825,114 @@ export function MerchantPanel({
       {/* 1. Unregistered Merchant View */}
       {!loading && !isMerchant && (
         <div className="glass-card" style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', padding: '30px', textAlign: 'center', alignItems: 'center' }}>
-          <Store size={48} color="var(--primary)" style={{ filter: 'drop-shadow(0 0 10px var(--primary-glow))' }} />
-          <h2 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 800 }}>
-            {lang === 'zh' ? '承兑商入驻中心' : 'Merchant Terminal'}
-          </h2>
-          <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: '0.9rem', maxWidth: '500px', lineHeight: '1.5' }}>
-            {lang === 'zh'
-              ? '成为平台承兑商以提供出金、入金双向兑换支持。您需要通过 zkTLS 证明完成企业或个人网银账户的 KYB 身份绑定，并存入基础保证金。'
-              : 'Register as an exchange merchant on-chain. Post collateral stake and verify your banking identities via zkTLS KYB validator.'}
-          </p>
-
-          {account ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', width: '100%', maxWidth: '320px', marginTop: '10px' }}>
-              <div>
-                <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '4px', textAlign: 'left' }}>
-                  {lang === 'zh' ? '质押基础保证金 (USDT)' : 'Staked Collateral (USDT)'}
-                </label>
-                <input
-                  type="number"
-                  value={registerStake}
-                  onChange={(e) => setRegisterStake(e.target.value)}
-                  className="input-field"
-                  placeholder="100"
-                />
+          
+          {applicationStatus === 'pending' ? (
+            // 等待审核状态 UI
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1.25rem', width: '100%', maxWidth: '480px' }}>
+              <div style={{
+                background: 'rgba(245, 158, 11, 0.1)',
+                color: 'var(--warning)',
+                padding: '12px',
+                borderRadius: '50%',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                filter: 'drop-shadow(0 0 10px rgba(245, 158, 11, 0.2))'
+              }}>
+                <Clock size={40} className="animate-pulse" />
               </div>
-              {isRegistering ? (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', alignItems: 'center', marginTop: '10px' }}>
-                  <Loader2 size={24} className="animate-spin" color="var(--primary)" />
-                  <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{proveMessage}</span>
+              <h2 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 800, color: 'var(--text-highlight)' }}>
+                {lang === 'zh' ? '承兑商入驻申请审核中' : 'Acceptor Application Pending'}
+              </h2>
+              <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: '0.9rem', lineHeight: '1.5' }}>
+                {lang === 'zh'
+                  ? '您的地址已自愿申请入驻平台承兑商，当前正在等待系统超级管理员审核。审核通过后，该终端将自动激活解锁。'
+                  : 'Your address has voluntarily applied to become a platform acceptor. Currently waiting for super admin review. This terminal will unlock automatically upon approval.'}
+              </p>
+              
+              <div style={{
+                background: 'rgba(255,255,255,0.02)',
+                border: '1px solid rgba(255,255,255,0.05)',
+                borderRadius: '8px',
+                padding: '10px 14px',
+                width: '100%',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '6px',
+                fontSize: '0.8rem',
+                textAlign: 'left'
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span style={{ color: 'var(--text-muted)' }}>{lang === 'zh' ? '申请钱包地址:' : 'Application Address:'}</span>
+                  <span style={{ fontFamily: 'monospace', color: 'var(--text-primary)', fontWeight: 600 }}>
+                    {account ? `${account.slice(0, 10)}...${account.slice(-8)}` : ''}
+                  </span>
                 </div>
-              ) : (
-                <button
-                  onClick={handleRegister}
-                  disabled={!registerStake}
-                  className="btn-primary"
-                  style={{ width: '100%', padding: '10px', fontSize: '0.9rem' }}
-                >
-                  {lang === 'zh' ? '自愿质押入驻成为承兑商 (zkTLS)' : 'Verify & Register (zkTLS)'}
-                </button>
-              )}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ color: 'var(--text-muted)' }}>{lang === 'zh' ? '审核状态:' : 'Status:'}</span>
+                  <span style={{ color: 'var(--warning)', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '4px' }}>
+                    <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: 'var(--warning)', display: 'inline-block' }} className="animate-ping" />
+                    {lang === 'zh' ? '等待审核 (Pending)' : 'Pending Verification'}
+                  </span>
+                </div>
+              </div>
+
+              <button
+                onClick={fetchMerchantStatus}
+                className="btn-primary"
+                style={{
+                  padding: '8px 20px',
+                  fontSize: '0.85rem',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  marginTop: '10px'
+                }}
+              >
+                <RefreshCw size={14} />
+                <span>{lang === 'zh' ? '手动刷新状态' : 'Refresh Status'}</span>
+              </button>
             </div>
           ) : (
-            <button onClick={connectWallet} className="btn-primary" style={{ padding: '8px 16px', marginTop: '10px' }}>
-              {lang === 'zh' ? '连接以太坊钱包以开始' : 'Connect Wallet to Start'}
-            </button>
+            // 未入驻申请 UI
+            <>
+              <Store size={48} color="var(--primary)" style={{ filter: 'drop-shadow(0 0 10px var(--primary-glow))' }} />
+              <h2 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 800 }}>
+                {lang === 'zh' ? '承兑商入驻中心' : 'Merchant Terminal'}
+              </h2>
+              <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: '0.9rem', maxWidth: '500px', lineHeight: '1.5' }}>
+                {lang === 'zh'
+                  ? '成为平台承兑商以提供出金、入金双向兑换支持。您可以自愿直接申请入驻，由超级管理员进行地址审核与批准。'
+                  : 'Register as an exchange merchant on-chain. Voluntarily apply directly to be verified and approved by the platform super admin.'}
+              </p>
+
+              {account ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', width: '100%', maxWidth: '320px', marginTop: '10px' }}>
+                  {isApplying ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', alignItems: 'center', marginTop: '10px' }}>
+                      <Loader2 size={24} className="animate-spin" color="var(--primary)" />
+                      <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                        {lang === 'zh' ? '正在提交入驻申请...' : 'Submitting onboarding application...'}
+                      </span>
+                    </div>
+                  ) : (
+                    <>
+                      <button
+                        onClick={handleApplyAcceptor}
+                        className="btn-primary"
+                        style={{ width: '100%', padding: '10px', fontSize: '0.9rem' }}
+                      >
+                        {lang === 'zh' ? '自愿入驻成为承兑商' : 'Voluntarily Apply to Become Acceptor'}
+                      </button>
+                    </>
+                  )}
+                </div>
+              ) : (
+                <button onClick={connectWallet} className="btn-primary" style={{ padding: '8px 16px', marginTop: '10px' }}>
+                  {lang === 'zh' ? '连接以太坊钱包以开始' : 'Connect Wallet to Start'}
+                </button>
+              )}
+            </>
           )}
         </div>
       )}
@@ -960,7 +1080,7 @@ export function MerchantPanel({
               <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
                 {products.map((p) => {
                   const key = `${p.productId}_${p.assetType}`;
-                  const isExpanded = expandedProduct === key;
+                  const isExpanded = !collapsedProducts.has(key);
 
                   return (
                     <div key={key} style={{
@@ -972,8 +1092,18 @@ export function MerchantPanel({
                       {/* Row header */}
                       <div
                         onClick={() => {
-                          setExpandedProduct(isExpanded ? null : key);
-                          setEditRate(p.rate.toString());
+                          setCollapsedProducts(prev => {
+                            const next = new Set(prev);
+                            if (next.has(key)) {
+                              next.delete(key);
+                            } else {
+                              next.add(key);
+                            }
+                            return next;
+                          });
+                          if (editRates[key] === undefined) {
+                            setEditRates(prev => ({ ...prev, [key]: p.rate.toString() }));
+                          }
                         }}
                         style={{
                           padding: '14px 16px',
@@ -1013,10 +1143,10 @@ export function MerchantPanel({
                             width: '8px',
                             height: '8px',
                             borderRadius: '50%',
-                            background: p.isOpen ? 'var(--success)' : 'var(--text-muted)'
+                            background: p.isOpen ? 'var(--success)' : 'var(--danger)'
                           }} />
-                          <span style={{ fontSize: '0.75rem', color: p.isOpen ? 'var(--success)' : 'var(--text-muted)' }}>
-                            {p.isOpen ? (lang === 'zh' ? '营业中' : 'Open') : (lang === 'zh' ? '已休店' : 'Closed')}
+                          <span style={{ fontSize: '0.75rem', color: p.isOpen ? 'var(--success)' : 'var(--danger)' }}>
+                            {p.isOpen ? (lang === 'zh' ? '商家上线' : 'Online') : (lang === 'zh' ? '商家下线' : 'Offline')}
                           </span>
                         </div>
 
@@ -1039,7 +1169,7 @@ export function MerchantPanel({
                                 transition: 'all 0.2s'
                               }}
                             >
-                              {p.isActive ? (lang === 'zh' ? '下架' : 'Delist') : (lang === 'zh' ? '上架' : 'Activate')}
+                              {p.isActive ? (lang === 'zh' ? '商品下架' : 'Delist Product') : (lang === 'zh' ? '商品上架' : 'List Product')}
                             </button>
                           </div>
                         </div>
@@ -1048,122 +1178,313 @@ export function MerchantPanel({
                       {/* Row Expanded panel */}
                       {isExpanded && (
                         <div style={{
-                          padding: '16px',
-                          borderTop: '1px solid rgba(255,255,255,0.03)',
-                          display: 'flex',
-                          flexDirection: 'column',
-                          gap: '14px',
-                          background: 'rgba(0,0,0,0.1)'
+                          padding: '20px',
+                          borderTop: theme === 'dark' ? '1px solid rgba(255,255,255,0.05)' : '1px solid rgba(0,0,0,0.06)',
+                          background: theme === 'dark' ? 'rgba(0,0,0,0.2)' : '#f9fafb',
+                          display: 'grid',
+                          gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+                          gap: '16px',
+                          borderRadius: '0 0 12px 12px'
                         }}>
-                          {/* Rates & manual open/close */}
-                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1rem' }}>
-                            {/* Rate edit */}
-                            <div>
-                              <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '4px' }}>
-                                {lang === 'zh' ? '编辑即期汇率' : 'Edit Exchange Rate'}
-                              </label>
-                              <div style={{ display: 'flex', gap: '8px' }}>
-                                <input
-                                  type="number"
-                                  value={editRate}
-                                  onChange={(e) => setEditRate(e.target.value)}
-                                  className="input-field"
-                                  style={{ padding: '6px 12px', fontSize: '0.85rem' }}
-                                />
-                                <button onClick={() => handleUpdateRate(p)} className="btn-primary" style={{ padding: '6px 14px', fontSize: '0.8rem' }}>
-                                  {lang === 'zh' ? '修改' : 'Update'}
-                                </button>
-                              </div>
-                            </div>
+                          
+                          {/* 业务逻辑解释提示横幅 */}
+                          <div style={{
+                            gridColumn: '1 / -1',
+                            background: theme === 'dark' ? 'rgba(99, 102, 241, 0.05)' : 'rgba(99, 102, 241, 0.03)',
+                            border: theme === 'dark' ? '1px solid rgba(99, 102, 241, 0.15)' : '1px solid rgba(99, 102, 241, 0.12)',
+                            borderRadius: '12px',
+                            padding: '12px 16px',
+                            fontSize: '0.75rem',
+                            color: 'var(--text-muted)',
+                            lineHeight: '1.45',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: '4px'
+                          }}>
+                            <strong style={{ color: 'var(--primary)', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.8rem' }}>
+                              💡 {lang === 'zh' ? '独立商品业务配置说明' : 'Product-Specific Setting Explanation'}
+                            </strong>
+                            <span>
+                              {lang === 'zh' 
+                                ? `即期汇率、营业时间、商家上线/下线状态及保证金均绑定于当前具体的商品 [${p.platformName} (#${p.productId.toString()})]。它们在智能合约中完全独立存储 and 调节，以实现不同支付渠道间的风险和资金隔离。您顶部的全局“承兑商状态：正常营业中”代表您的全局入驻资格处于激活状态。`
+                                : `Exchange rate, business hours, online/offline status, and collateral are bound specifically to this product [${p.platformName} (#${p.productId.toString()})]. They are stored and adjusted independently on-chain for risk and asset isolation between networks. Your global "Merchant Status: Active" on top indicates that your overall enrollment is validated.`
+                              }
+                            </span>
+                          </div>
 
-                            {/* Manual Override */}
+                          {/* 1. 汇率调节卡片 */}
+                          <div style={{
+                            background: theme === 'dark' ? 'rgba(255,255,255,0.02)' : '#ffffff',
+                            border: theme === 'dark' ? '1px solid rgba(255,255,255,0.05)' : '1px solid rgba(0,0,0,0.06)',
+                            borderRadius: '12px',
+                            padding: '16px',
+                            boxShadow: '0 2px 8px rgba(0,0,0,0.02)',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            justifyContent: 'space-between',
+                            gap: '12px'
+                          }}>
                             <div>
-                              <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '4px' }}>
-                                {lang === 'zh' ? '手动开闭店控制' : 'Manual Open/Close'}
-                              </label>
-                              <div style={{ display: 'flex', gap: '8px' }}>
-                                <button
-                                  onClick={() => handleManualOpenClose(p, true)}
-                                  className="btn-primary"
-                                  style={{
-                                    flex: 1,
-                                    padding: '6px',
-                                    fontSize: '0.8rem',
-                                    background: 'rgba(16,185,129,0.15)',
-                                    color: 'var(--success)',
-                                    border: '1px solid rgba(16,185,129,0.2)'
-                                  }}
-                                >
-                                  {lang === 'zh' ? '立即营业' : 'Open Now'}
-                                </button>
-                                <button
-                                  onClick={() => handleManualOpenClose(p, false)}
-                                  className="btn-primary"
-                                  style={{
-                                    flex: 1,
-                                    padding: '6px',
-                                    fontSize: '0.8rem',
-                                    background: 'rgba(239,68,68,0.15)',
-                                    color: 'var(--danger)',
-                                    border: '1px solid rgba(239,68,68,0.2)'
-                                  }}
-                                >
-                                  {lang === 'zh' ? '休市闭店' : 'Close Now'}
-                                </button>
-                              </div>
+                              <strong style={{ display: 'block', fontSize: '0.85rem', color: theme === 'dark' ? 'rgba(255,255,255,0.9)' : '#1f2937', fontWeight: 700 }}>
+                                {lang === 'zh' ? '📈 即期汇率调节' : '📈 Exchange Rate'}
+                              </strong>
+                              <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', display: 'block', marginTop: '2px' }}>
+                                {lang === 'zh' ? `当前汇率: ${p.rate.toFixed(4)}` : `Current: ${p.rate.toFixed(4)}`}
+                              </span>
+                            </div>
+                            <div style={{ display: 'flex', gap: '8px' }}>
+                              <input
+                                type="number"
+                                placeholder={lang === 'zh' ? '输入新汇率' : 'New rate'}
+                                value={editRates[key] !== undefined ? editRates[key] : p.rate.toString()}
+                                onChange={(e) => setEditRates(prev => ({ ...prev, [key]: e.target.value }))}
+                                className="input-field"
+                                style={{
+                                  padding: '6px 12px',
+                                  fontSize: '0.85rem',
+                                  height: '36px',
+                                  borderRadius: '8px',
+                                  background: theme === 'dark' ? 'rgba(255,255,255,0.03)' : '#ffffff',
+                                  border: theme === 'dark' ? '1px solid rgba(255,255,255,0.1)' : '1px solid #d1d5db',
+                                  flex: 1
+                                }}
+                              />
+                              <button
+                                onClick={() => handleUpdateRate(p)}
+                                className="btn-primary"
+                                style={{
+                                  padding: '0 14px',
+                                  fontSize: '0.8rem',
+                                  height: '36px',
+                                  borderRadius: '8px',
+                                  fontWeight: 600
+                                }}
+                              >
+                                {lang === 'zh' ? '修改' : 'Update'}
+                              </button>
                             </div>
                           </div>
 
-                          {/* Hours & Collateral delta */}
-                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1rem' }}>
-                            {/* Business Hours */}
+                          {/* 2. 手动营业状态卡片 */}
+                          <div style={{
+                            background: theme === 'dark' ? 'rgba(255,255,255,0.02)' : '#ffffff',
+                            border: theme === 'dark' ? '1px solid rgba(255,255,255,0.05)' : '1px solid rgba(0,0,0,0.06)',
+                            borderRadius: '12px',
+                            padding: '16px',
+                            boxShadow: '0 2px 8px rgba(0,0,0,0.02)',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            justifyContent: 'space-between',
+                            gap: '12px'
+                          }}>
                             <div>
-                              <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '4px' }}>
-                                {lang === 'zh' ? '营业时间设置 (时)' : 'Business Hours (Hours)'}
-                              </label>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                <input
-                                  type="number"
-                                  value={editOpenHour}
-                                  onChange={(e) => setEditOpenHour(e.target.value)}
-                                  className="input-field"
-                                  style={{ padding: '6px', fontSize: '0.8rem', textAlign: 'center' }}
-                                />
-                                <span style={{ color: 'var(--text-muted)' }}>-</span>
-                                <input
-                                  type="number"
-                                  value={editCloseHour}
-                                  onChange={(e) => setEditCloseHour(e.target.value)}
-                                  className="input-field"
-                                  style={{ padding: '6px', fontSize: '0.8rem', textAlign: 'center' }}
-                                />
-                                <button onClick={() => handleUpdateHours(p)} className="btn-primary" style={{ padding: '6px 14px', fontSize: '0.8rem' }}>
-                                  {lang === 'zh' ? '应用' : 'Apply'}
-                                </button>
+                              <strong style={{ display: 'block', fontSize: '0.85rem', color: theme === 'dark' ? 'rgba(255,255,255,0.9)' : '#1f2937', fontWeight: 700 }}>
+                                {lang === 'zh' ? '🚪 营业状态覆盖' : '🚪 Business Override'}
+                              </strong>
+                              <span style={{
+                                 fontSize: '0.72rem',
+                                 color: p.isOpen ? '#10b981' : '#ef4444',
+                                 display: 'inline-flex',
+                                 alignItems: 'center',
+                                 gap: '4px',
+                                 marginTop: '2px',
+                                 fontWeight: 600
+                               }}>
+                                 <span style={{
+                                   width: '6px',
+                                   height: '6px',
+                                   borderRadius: '50%',
+                                   background: p.isOpen ? '#10b981' : '#ef4444',
+                                   display: 'inline-block'
+                                 }} />
+                                 {lang === 'zh' ? (p.isOpen ? '当前状态: 商家上线' : '当前状态: 商家下线') : (p.isOpen ? 'Status: Online' : 'Status: Offline')}
+                               </span>
+                            </div>
+                            <div style={{ display: 'flex', gap: '8px' }}>
+                              <button
+                                onClick={() => handleManualOpenClose(p, true)}
+                                style={{
+                                  flex: 1,
+                                  height: '36px',
+                                  borderRadius: '8px',
+                                  fontSize: '0.8rem',
+                                  fontWeight: 600,
+                                  cursor: 'pointer',
+                                  transition: 'all 0.2s',
+                                  background: p.isOpen ? '#10b981' : (theme === 'dark' ? 'rgba(16,185,129,0.1)' : 'rgba(16,185,129,0.05)'),
+                                  color: p.isOpen ? '#ffffff' : '#10b981',
+                                  border: p.isOpen ? '1px solid #10b981' : (theme === 'dark' ? '1px solid rgba(16,185,129,0.2)' : '1px solid rgba(16,185,129,0.4)')
+                                }}
+                              >
+                                {lang === 'zh' ? '商家上线' : 'Go Online'}
+                              </button>
+                              <button
+                                onClick={() => handleManualOpenClose(p, false)}
+                                style={{
+                                  flex: 1,
+                                  height: '36px',
+                                  borderRadius: '8px',
+                                  fontSize: '0.8rem',
+                                  fontWeight: 600,
+                                  cursor: 'pointer',
+                                  transition: 'all 0.2s',
+                                  background: !p.isOpen ? '#ef4444' : (theme === 'dark' ? 'rgba(239,68,68,0.1)' : 'rgba(239,68,68,0.05)'),
+                                  color: !p.isOpen ? '#ffffff' : '#ef4444',
+                                  border: !p.isOpen ? '1px solid #ef4444' : (theme === 'dark' ? '1px solid rgba(239,68,68,0.2)' : '1px solid rgba(239,68,68,0.4)')
+                                }}
+                              >
+                                {lang === 'zh' ? '商家下线' : 'Go Offline'}
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* 3. 营业时间段设置 */}
+                          <div style={{
+                            background: theme === 'dark' ? 'rgba(255,255,255,0.02)' : '#ffffff',
+                            border: theme === 'dark' ? '1px solid rgba(255,255,255,0.05)' : '1px solid rgba(0,0,0,0.06)',
+                            borderRadius: '12px',
+                            padding: '16px',
+                            boxShadow: '0 2px 8px rgba(0,0,0,0.02)',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            justifyContent: 'space-between',
+                            gap: '12px'
+                          }}>
+                            <div>
+                              <strong style={{ display: 'block', fontSize: '0.85rem', color: theme === 'dark' ? 'rgba(255,255,255,0.9)' : '#1f2937', fontWeight: 700 }}>
+                                {lang === 'zh' ? '🕒 营业时间设置' : '🕒 Business Hours'}
+                              </strong>
+                              <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', display: 'block', marginTop: '2px' }}>
+                                {lang === 'zh' ? '输入 24 小时制整数小时' : 'Enter 24h format hours'}
+                              </span>
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                              <input
+                                type="number"
+                                value={editOpenHours[key] !== undefined ? editOpenHours[key] : '8'}
+                                onChange={(e) => setEditOpenHours(prev => ({ ...prev, [key]: e.target.value }))}
+                                className="input-field"
+                                style={{
+                                  width: '50px',
+                                  padding: '6px',
+                                  fontSize: '0.8rem',
+                                  textAlign: 'center',
+                                  height: '36px',
+                                  borderRadius: '8px',
+                                  background: theme === 'dark' ? 'rgba(255,255,255,0.03)' : '#ffffff',
+                                  border: theme === 'dark' ? '1px solid rgba(255,255,255,0.1)' : '1px solid #d1d5db'
+                                }}
+                              />
+                              <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>-</span>
+                              <input
+                                type="number"
+                                value={editCloseHours[key] !== undefined ? editCloseHours[key] : '22'}
+                                onChange={(e) => setEditCloseHours(prev => ({ ...prev, [key]: e.target.value }))}
+                                className="input-field"
+                                style={{
+                                  width: '50px',
+                                  padding: '6px',
+                                  fontSize: '0.8rem',
+                                  textAlign: 'center',
+                                  height: '36px',
+                                  borderRadius: '8px',
+                                  background: theme === 'dark' ? 'rgba(255,255,255,0.03)' : '#ffffff',
+                                  border: theme === 'dark' ? '1px solid rgba(255,255,255,0.1)' : '1px solid #d1d5db'
+                                }}
+                              />
+                              <button
+                                onClick={() => handleUpdateHours(p)}
+                                className="btn-primary"
+                                style={{
+                                  padding: '0 14px',
+                                  fontSize: '0.8rem',
+                                  height: '36px',
+                                  borderRadius: '8px',
+                                  fontWeight: 600,
+                                  flex: 1
+                                }}
+                              >
+                                {lang === 'zh' ? '应用' : 'Apply'}
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* 4. 保证金池卡片 */}
+                          <div style={{
+                            background: theme === 'dark' ? 'rgba(255,255,255,0.02)' : '#ffffff',
+                            border: theme === 'dark' ? '1px solid rgba(255,255,255,0.05)' : '1px solid rgba(0,0,0,0.06)',
+                            borderRadius: '12px',
+                            padding: '16px',
+                            boxShadow: '0 2px 8px rgba(0,0,0,0.02)',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            justifyContent: 'space-between',
+                            gap: '12px'
+                          }}>
+                            <div>
+                              <strong style={{ display: 'block', fontSize: '0.85rem', color: theme === 'dark' ? 'rgba(255,255,255,0.9)' : '#1f2937', fontWeight: 700 }}>
+                                {lang === 'zh' ? '💰 调整保证金池' : '💰 Bond Pool Stake'}
+                              </strong>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', marginTop: '4px' }}>
+                                <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', display: 'block' }}>
+                                  {lang === 'zh' ? `可用: ${formatUnits(p.availableAmount, 18)} USDT` : `Stake: ${formatUnits(p.availableAmount, 18)} USDT`}
+                                </span>
+                                <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', display: 'block' }}>
+                                  {lang === 'zh' ? `账户余额: ${Number(usdtBalance).toFixed(2)} USDT` : `Wallet Balance: ${Number(usdtBalance).toFixed(2)} USDT`}
+                                </span>
                               </div>
                             </div>
-
-                            {/* Collateral adjust */}
-                            <div>
-                              <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '4px' }}>
-                                {lang === 'zh' ? '增减保证金资金池' : 'Adjust Collateral Stake'}
-                              </label>
-                              <div style={{ display: 'flex', gap: '8px' }}>
-                                <input
-                                  type="number"
-                                  value={collateralDelta}
-                                  onChange={(e) => setCollateralDelta(e.target.value)}
-                                  placeholder="e.g. 500"
-                                  className="input-field"
-                                  style={{ padding: '6px 12px', fontSize: '0.85rem' }}
-                                />
-                                <button onClick={() => handleAdjustCollateral(p, true)} className="btn-primary" style={{ padding: '6px 12px', fontSize: '0.8rem', background: 'rgba(16,185,129,0.2)', color: 'var(--success)' }}>
-                                  +
-                                </button>
-                                <button onClick={() => handleAdjustCollateral(p, false)} className="btn-primary" style={{ padding: '6px 12px', fontSize: '0.8rem', background: 'rgba(239,68,68,0.2)', color: 'var(--danger)' }}>
-                                  -
-                                </button>
-                              </div>
+                            <div style={{ display: 'flex', gap: '6px' }}>
+                              <input
+                                type="number"
+                                placeholder={lang === 'zh' ? '增加/减少额度' : 'Amount'}
+                                value={collateralDeltas[key] ?? ''}
+                                onChange={(e) => setCollateralDeltas(prev => ({ ...prev, [key]: e.target.value }))}
+                                className="input-field"
+                                style={{
+                                  padding: '6px 12px',
+                                  fontSize: '0.85rem',
+                                  height: '36px',
+                                  borderRadius: '8px',
+                                  background: theme === 'dark' ? 'rgba(255,255,255,0.03)' : '#ffffff',
+                                  border: theme === 'dark' ? '1px solid rgba(255,255,255,0.1)' : '1px solid #d1d5db',
+                                  flex: 1
+                                }}
+                              />
+                              <button
+                                onClick={() => handleAdjustCollateral(p, true)}
+                                style={{
+                                  width: '36px',
+                                  height: '36px',
+                                  borderRadius: '8px',
+                                  fontSize: '1rem',
+                                  fontWeight: 'bold',
+                                  cursor: 'pointer',
+                                  transition: 'all 0.2s',
+                                  background: theme === 'dark' ? 'rgba(16,185,129,0.15)' : 'rgba(16,185,129,0.1)',
+                                  color: '#10b981',
+                                  border: '1px solid rgba(16,185,129,0.3)'
+                                }}
+                              >
+                                +
+                              </button>
+                              <button
+                                onClick={() => handleAdjustCollateral(p, false)}
+                                style={{
+                                  width: '36px',
+                                  height: '36px',
+                                  borderRadius: '8px',
+                                  fontSize: '1rem',
+                                  fontWeight: 'bold',
+                                  cursor: 'pointer',
+                                  transition: 'all 0.2s',
+                                  background: theme === 'dark' ? 'rgba(239,68,68,0.15)' : 'rgba(239,68,68,0.1)',
+                                  color: '#ef4444',
+                                  border: '1px solid rgba(239,68,68,0.3)'
+                                }}
+                              >
+                                -
+                              </button>
                             </div>
                           </div>
 
@@ -1301,6 +1622,19 @@ export function MerchantPanel({
                               </button>
                             </div>
                           )}
+
+                          {provingStatus === 'error' && (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'center', color: '#ef4444', fontSize: '0.8rem' }}>
+                              <AlertCircle size={24} color="#ef4444" />
+                              <strong>{lang === 'zh' ? '证明放款失败' : 'Settlement Failed'}</strong>
+                              <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', textAlign: 'center', margin: '4px 0 8px 0', lineHeight: 1.4 }}>
+                                {renderErrorMessage(proveMessage)}
+                              </span>
+                              <button onClick={() => setProvingStatus('idle')} className="btn-primary" style={{ padding: '4px 12px', fontSize: '0.75rem' }}>
+                                {lang === 'zh' ? '重试' : 'Retry'}
+                              </button>
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
@@ -1313,6 +1647,47 @@ export function MerchantPanel({
         </div>
       )}
 
+      {/* Global Minimalist Toast */}
+      {toastMessage && (
+        <div style={{
+          position: 'fixed',
+          top: '24px',
+          left: '50%',
+          transform: 'translateX(-50%)',
+          background: 'linear-gradient(135deg, rgba(24, 24, 37, 0.95) 0%, rgba(15, 15, 26, 0.98) 100%)',
+          backdropFilter: 'blur(20px)',
+          borderLeft: toastType === 'success' ? '4px solid #10b981' : '4px solid #f59e0b',
+          borderTop: '1px solid rgba(255, 255, 255, 0.08)',
+          borderRight: '1px solid rgba(255, 255, 255, 0.08)',
+          borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
+          color: '#ffffff',
+          padding: '12px 20px',
+          borderRadius: '12px',
+          boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.3), 0 10px 10px -5px rgba(0, 0, 0, 0.3)',
+          fontSize: '0.85rem',
+          fontWeight: 600,
+          zIndex: 9999,
+          pointerEvents: 'none',
+          animation: 'slideDownFadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '10px',
+        }}>
+          {toastType === 'success' ? (
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+              <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+              <polyline points="22 4 12 14.01 9 11.01" />
+            </svg>
+          ) : (
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+              <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+              <line x1="12" y1="9" x2="12" y2="13" />
+              <line x1="12" y1="17" x2="12.01" y2="17" />
+            </svg>
+          )}
+          <span style={{ letterSpacing: '0.01em', lineHeight: '1.4' }}>{toastMessage}</span>
+        </div>
+      )}
     </div>
   );
 }

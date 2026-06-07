@@ -136,9 +136,8 @@ interface FxIntelPanelProps {
   onRateChange: (rate: number, pair: string) => void;
   lang: 'zh' | 'en';
   amount: string;
-  setAmount: (amt: string) => void;
   horizon: string;
-  setHorizon: (hor: string) => void;
+  pair: string;
   onAnalysisUpdate: (analysis: any) => void;
 }
 
@@ -146,12 +145,10 @@ export function FxIntelPanel({
   onRateChange, 
   lang, 
   amount, 
-  setAmount, 
   horizon, 
-  setHorizon, 
+  pair, 
   onAnalysisUpdate 
 }: FxIntelPanelProps) {
-  const [pair, setPair] = useState('USD/CNY');
   const [loading, setLoading] = useState(false);
   const [hasRun, setHasRun] = useState(false);
   const [loadingStep, setLoadingStep] = useState(0);
@@ -702,111 +699,7 @@ export function FxIntelPanel({
         </div>
       </div>
 
-      {/* Agent Status Dashboard */}
-      <div className="agent-status-card">
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.85rem' }}>
-            <Cpu size={14} color="var(--primary)" />
-            <span style={{ fontWeight: 600, color: 'var(--text-muted)' }}>
-              {lang === 'zh' ? '智能体角色:' : 'Agent Role:'}
-            </span>
-            <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>
-              {lang === 'zh' ? '智能外汇套保智能体 v1.0' : 'FX Smart Hedging Agent v1.0'}
-            </span>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <span style={{ 
-              width: '6px', 
-              height: '6px', 
-              borderRadius: '50%', 
-              background: data ? '#34d399' : '#6366f1', 
-              boxShadow: data ? '0 0 8px #34d399' : '0 0 8px #6366f1',
-              animation: 'badgeBlink 2s infinite' 
-            }} />
-            <span style={{ fontSize: '0.75rem', color: data ? '#34d399' : '#818cf8', fontWeight: 600 }}>
-              {data ? (lang === 'zh' ? '运行中' : 'Active') : (lang === 'zh' ? '已就绪' : 'Ready')}
-            </span>
-          </div>
-        </div>
 
-        <div style={{ 
-          display: 'grid', 
-          gridTemplateColumns: 'repeat(2, 1fr)', 
-          gap: '8px', 
-          fontSize: '0.75rem', 
-          marginTop: '4px',
-          borderTop: '1px solid rgba(255, 255, 255, 0.05)',
-          paddingTop: '8px'
-        }}>
-          <div style={{ display: 'flex', gap: '4px', color: 'var(--text-muted)' }}>
-            <span>{lang === 'zh' ? '基座模型:' : 'Core Model:'}</span>
-            <strong style={{ color: 'var(--text-primary)' }}>
-              {data ? (data.provider === 'hunyuan' ? 'Tencent Hunyuan' : 'Google Gemini') : 'Pending...'} 
-              {data && (
-                <span style={{ fontSize: '0.7rem', color: 'var(--primary)', marginLeft: '4px' }}>
-                  ({data.model || 'hy3-preview'})
-                </span>
-              )}
-            </strong>
-          </div>
-          <div style={{ display: 'flex', gap: '4px', color: 'var(--text-muted)' }}>
-            <span>{lang === 'zh' ? '感知传感器:' : 'Sensors:'}</span>
-            <strong style={{ color: 'var(--text-primary)' }}>Polymarket Gamma API</strong>
-          </div>
-          <div style={{ display: 'flex', gap: '4px', color: 'var(--text-muted)' }}>
-            <span>{lang === 'zh' ? '记忆体类型:' : 'Memory Type:'}</span>
-            <strong style={{ color: 'var(--text-primary)' }}>PostgreSQL RAG (pgvector)</strong>
-          </div>
-          <div style={{ display: 'flex', gap: '4px', color: 'var(--text-muted)' }}>
-            <span>{lang === 'zh' ? '决策依据:' : 'Reference:'}</span>
-            <strong style={{ color: 'var(--text-primary)' }}>
-              {data ? `${data.polymarketData?.length || 0} ${lang === 'zh' ? '个相关预测盘口' : 'active predictions'}` : 'Pending...'}
-            </strong>
-          </div>
-        </div>
-      </div>
-
-      {/* 参数输入与货币对切换配置网格 */}
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
-          gap: '1rem',
-          background: 'rgba(255,255,255,0.01)',
-          borderRadius: '12px',
-          padding: '1rem',
-          border: '1px solid rgba(255,255,255,0.04)',
-        }}
-      >
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-          <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: 600 }}>{lang === 'zh' ? '选择分析货币对' : 'Currency Pair'}</label>
-          <select value={pair} onChange={(e) => setPair(e.target.value)} className="select-field" style={{ width: '100%' }}>
-            <option value="USD/CNY">{t.usdCny}</option>
-            <option value="USD/MYR">{t.usdMyr}</option>
-            <option value="CNY/MYR">{t.cnyMyr}</option>
-          </select>
-        </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-          <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: 600 }}>{t.amountLabel}</label>
-          <div style={{ position: 'relative', width: '100%' }}>
-            <input 
-              type="number" 
-              value={amount} 
-              onChange={(e) => setAmount(e.target.value)} 
-              className="input-field" 
-              style={{ padding: '0.5rem', fontSize: '0.9rem', width: '100%', boxSizing: 'border-box' }}
-            />
-          </div>
-        </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-          <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: 600 }}>{t.horizonLabel}</label>
-          <select value={horizon} onChange={(e) => setHorizon(e.target.value)} className="select-field" style={{ width: '100%' }}>
-            <option value="1d">{t.horizonShort}</option>
-            <option value="3d">{t.horizonMedium}</option>
-            <option value="7d">{t.horizonLong}</option>
-          </select>
-        </div>
-      </div>
 
       {/* 智能体尚未启动时的就绪提示和启动按钮 */}
       {!data && (

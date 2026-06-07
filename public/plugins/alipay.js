@@ -539,7 +539,4 @@ function main() {
     ]
   );
 }
-const alipay_plugin = { main, onClick, expandUI, minimizeUI, config };
-export {
-  alipay_plugin as default
-};
+export default { main, onClick, expandUI, minimizeUI, config };

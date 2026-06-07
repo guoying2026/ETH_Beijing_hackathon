@@ -791,6 +791,91 @@ app.post('/api/refresh-fx-history', async (req, res) => {
   }
 });
 
+// --- 承兑商自愿入驻与审核管理 API ---
+
+// 1. 提交承兑商申请入驻
+app.post('/api/acceptors/apply', async (req, res) => {
+  const { address } = req.body;
+  if (!address) {
+    return res.status(400).json({ error: 'Missing "address" field' });
+  }
+  const cleanAddress = address.toLowerCase();
+  console.log(`📝 [Acceptor Apply] Received application for address: ${cleanAddress}`);
+  try {
+    const dbResult = await pool.query(
+      `INSERT INTO acceptors (address, status, updated_at)
+       VALUES ($1, 'pending', CURRENT_TIMESTAMP)
+       ON CONFLICT (address) DO UPDATE SET status = 'pending', updated_at = CURRENT_TIMESTAMP
+       RETURNING *`,
+      [cleanAddress]
+    );
+    res.json({ success: true, application: dbResult.rows[0] });
+  } catch (error) {
+    console.error('❌ Failed to save acceptor application:', error);
+    res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+// 2. 查询特定地址的承兑商入驻状态
+app.get('/api/acceptors/status', async (req, res) => {
+  const address = req.query.address as string;
+  if (!address) {
+    return res.status(400).json({ error: 'Missing "address" query parameter' });
+  }
+  const cleanAddress = address.toLowerCase();
+  try {
+    const dbResult = await pool.query(
+      'SELECT status FROM acceptors WHERE address = $1',
+      [cleanAddress]
+    );
+    if (dbResult.rows.length > 0) {
+      res.json({ status: dbResult.rows[0].status });
+    } else {
+      res.json({ status: 'none' });
+    }
+  } catch (error) {
+    console.error('❌ Failed to query acceptor status:', error);
+    res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+// 3. 获取所有申请列表（超级管理员用）
+app.get('/api/acceptors', async (_req, res) => {
+  try {
+    const dbResult = await pool.query(
+      'SELECT address, status, created_at, updated_at FROM acceptors ORDER BY created_at DESC'
+    );
+    res.json(dbResult.rows);
+  } catch (error) {
+    console.error('❌ Failed to fetch acceptors list:', error);
+    res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+// 4. 超级管理员审核通过申请
+app.post('/api/acceptors/approve', async (req, res) => {
+  const { address } = req.body;
+  if (!address) {
+    return res.status(400).json({ error: 'Missing "address" field' });
+  }
+  const cleanAddress = address.toLowerCase();
+  console.log(`✅ [Acceptor Approve] Approving address: ${cleanAddress}`);
+  try {
+    const dbResult = await pool.query(
+      `UPDATE acceptors SET status = 'approved', updated_at = CURRENT_TIMESTAMP WHERE address = $1 RETURNING *`,
+      [cleanAddress]
+    );
+    if (dbResult.rows.length > 0) {
+      res.json({ success: true, application: dbResult.rows[0] });
+    } else {
+      res.status(404).json({ error: 'Application not found' });
+    }
+  } catch (error) {
+    console.error('❌ Failed to approve acceptor:', error);
+    res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
 // 服务启动
 app.listen(PORT, async () => {
   console.log(`🚀 Node.js Backend API Server is running on http://localhost:${PORT}`);

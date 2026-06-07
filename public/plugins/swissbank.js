@@ -262,13 +262,4 @@ var main = () => {
     ]
   );
 };
-var swissbank_plugin_default = {
-  main,
-  onClick,
-  expandUI,
-  minimizeUI,
-  config
-};
-export {
-  swissbank_plugin_default as default
-};
+export default { main, onClick, expandUI, minimizeUI, config };
