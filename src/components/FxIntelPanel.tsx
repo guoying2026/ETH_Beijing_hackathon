@@ -165,9 +165,7 @@ export function FxIntelPanel({
     setIsRefreshingHistory(true);
     const [base, quote] = pair.split('/');
     try {
-      const currentHost = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
-      const apiUrl = import.meta.env.VITE_API_URL || `http://${currentHost}:3001`;
-      const res = await fetch(`${apiUrl}/api/refresh-fx-history`, {
+      const res = await fetch('/api/refresh-fx-history', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ base, quote })
@@ -254,9 +252,7 @@ export function FxIntelPanel({
     setLoading(true);
     const [base, quote] = selectedPair.split('/');
     try {
-      const currentHost = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
-      const apiUrl = import.meta.env.VITE_API_URL || `http://${currentHost}:3001`;
-      const res = await fetch(`${apiUrl}/api/fx-intel?base=${base}&quote=${quote}&amount=${amount}&horizon=${horizon}&lang=${lang}`);
+      const res = await fetch(`/api/fx-intel?base=${base}&quote=${quote}&amount=${amount}&horizon=${horizon}&lang=${lang}`);
       if (!res.ok) throw new Error('Failed to fetch api');
       const json = await res.json();
       setData(json);
