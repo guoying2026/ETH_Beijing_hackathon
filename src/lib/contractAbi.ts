@@ -664,6 +664,18 @@ export const C2C_ESCROW_ABI = [
         ],
         stateMutability: 'view' as const,
     },
+    {
+        type: 'function' as const,
+        name: 'hasActiveOrder',
+        inputs: [
+            { name: '_buyer',      type: 'address' as const },
+            { name: '_merchant',   type: 'address' as const },
+            { name: '_assetType',  type: 'uint8'   as const },
+            { name: '_productId',  type: 'uint256' as const },
+        ],
+        outputs: [{ name: '', type: 'bool' as const }],
+        stateMutability: 'view' as const,
+    },
     // ── Events ──
     {
         type: 'event' as const,

@@ -1009,18 +1009,20 @@ export function AdminPanel({
           top: '24px',
           left: '50%',
           transform: 'translateX(-50%)',
-          background: 'linear-gradient(135deg, rgba(24, 24, 37, 0.95) 0%, rgba(15, 15, 26, 0.98) 100%)',
+          background: toastType === 'success' 
+            ? 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)' 
+            : 'linear-gradient(135deg, #fef9c3 0%, #fef3c7 100%)', 
           backdropFilter: 'blur(20px)',
-          borderLeft: toastType === 'success' ? '4px solid #10b981' : '4px solid #f59e0b',
-          borderTop: '1px solid rgba(255, 255, 255, 0.08)',
-          borderRight: '1px solid rgba(255, 255, 255, 0.08)',
-          borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
-          color: '#ffffff',
+          borderLeft: toastType === 'success' ? '4px solid #16a34a' : '4px solid #d97706',
+          borderTop: toastType === 'success' ? '1px solid #bbf7d0' : '1px solid #fde68a',
+          borderRight: toastType === 'success' ? '1px solid #bbf7d0' : '1px solid #fde68a',
+          borderBottom: toastType === 'success' ? '1px solid #bbf7d0' : '1px solid #fde68a',
+          color: toastType === 'success' ? '#14532d' : '#78350f', 
           padding: '12px 20px',
           borderRadius: '12px',
-          boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.3), 0 10px 10px -5px rgba(0, 0, 0, 0.3)',
+          boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.15), 0 10px 10px -5px rgba(0, 0, 0, 0.1)',
           fontSize: '0.85rem',
-          fontWeight: 600,
+          fontWeight: 700, 
           zIndex: 9999,
           pointerEvents: 'none',
           animation: 'slideDownFadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1)',
@@ -1029,18 +1031,18 @@ export function AdminPanel({
           gap: '10px',
         }}>
           {toastType === 'success' ? (
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#16a34a" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
               <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
               <polyline points="22 4 12 14.01 9 11.01" />
             </svg>
           ) : (
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#d97706" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
               <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
               <line x1="12" y1="9" x2="12" y2="13" />
               <line x1="12" y1="17" x2="12.01" y2="17" />
             </svg>
           )}
-          <span style={{ letterSpacing: '0.01em', lineHeight: '1.4' }}>{toastMessage}</span>
+          <span style={{ letterSpacing: '0.01em', lineHeight: '1.4', color: 'inherit' }}>{toastMessage}</span>
         </div>
       )}
 

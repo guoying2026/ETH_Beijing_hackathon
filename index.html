@@ -5,6 +5,28 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>fx-intel-c2c</title>
+    <script>
+      window.addEventListener('error', (event) => {
+        if (event.message && (
+          event.message.includes('Cannot redefine property: ethereum') ||
+          event.message.includes('evMask')
+        )) {
+          console.warn('Ignored EVMask extension injection error:', event.message);
+          event.preventDefault();
+          event.stopPropagation();
+        }
+      }, true);
+      window.addEventListener('unhandledrejection', (event) => {
+        if (event.reason && event.reason.message && (
+          event.reason.message.includes('Cannot redefine property: ethereum') ||
+          event.reason.message.includes('evMask')
+        )) {
+          console.warn('Ignored EVMask rejection:', event.reason.message);
+          event.preventDefault();
+          event.stopPropagation();
+        }
+      }, true);
+    </script>
   </head>
   <body>
     <div id="root"></div>

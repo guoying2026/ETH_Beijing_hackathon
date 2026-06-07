@@ -277,11 +277,30 @@ export function DashboardPanel({
       const nameHash = keccak256(encodePacked(['string', 'bytes32'], [normalize(name), saltHex]));
       const idHash = keccak256(encodePacked(['string', 'bytes32'], [normalize(handle), saltHex]));
 
+      let estimatedGas: bigint | undefined = undefined;
+      try {
+        const estGas = await publicClient.estimateContractGas({
+          address: ADMIN_ADDRESS,
+          abi: C2C_ADMIN_ABI,
+          functionName: 'setPlatformBinding',
+          args: [platformId, nameHash, idHash],
+          account: account || '0x0000000000000000000000000000000000000000'
+        });
+        estimatedGas = (estGas * 125n) / 100n;
+      } catch (err: any) {
+        console.error('Gas estimation failed for setPlatformBinding:', err);
+        throw new Error(lang === 'zh'
+          ? `身份绑定预估失败 (合约 Revert)：${err.shortMessage || err.message || '未知原因'}`
+          : `Platform binding simulation failed (Contract Reverted): ${err.shortMessage || err.message || 'Unknown reason'}`
+        );
+      }
+
       const hash = await (walletClient as any).writeContract({
         address: ADMIN_ADDRESS,
         abi: C2C_ADMIN_ABI,
         functionName: 'setPlatformBinding',
-        args: [platformId, nameHash, idHash]
+        args: [platformId, nameHash, idHash],
+        ...(estimatedGas ? { gas: estimatedGas } : {})
       });
 
       await publicClient.waitForTransactionReceipt({ hash });
@@ -399,11 +418,30 @@ export function DashboardPanel({
           serverName: 'SwissBank'
         }];
 
+        let estimatedGas: bigint | undefined = undefined;
+        try {
+          const estGas = await publicClient.estimateContractGas({
+            address: ESCROW_ADDRESS,
+            abi: C2C_ESCROW_ABI,
+            functionName: 'payOrderByPlatform',
+            args: [order.merchant, order.productId, order.orderId, dummyProofs],
+            account: account || '0x0000000000000000000000000000000000000000'
+          });
+          estimatedGas = (estGas * 125n) / 100n;
+        } catch (err: any) {
+          console.error('Gas estimation failed for payOrderByPlatform (mock):', err);
+          throw new Error(lang === 'zh'
+            ? `清算放款交易预估失败 (合约 Revert)：${err.shortMessage || err.message || '未知原因'}`
+            : `Transaction simulation failed (Contract Reverted): ${err.shortMessage || err.message || 'Unknown reason'}`
+          );
+        }
+
         const hash = await (walletClient as any).writeContract({
           address: ESCROW_ADDRESS,
           abi: C2C_ESCROW_ABI,
           functionName: 'payOrderByPlatform',
-          args: [order.merchant, order.productId, order.orderId, dummyProofs]
+          args: [order.merchant, order.productId, order.orderId, dummyProofs],
+          ...(estimatedGas ? { gas: estimatedGas } : {})
         });
 
         await publicClient.waitForTransactionReceipt({ hash });
@@ -505,11 +543,30 @@ export function DashboardPanel({
         proofsArr = [buildContractProofObj(parsedResult)];
       }
 
+      let estimatedGas: bigint | undefined = undefined;
+      try {
+        const estGas = await publicClient.estimateContractGas({
+          address: ESCROW_ADDRESS,
+          abi: C2C_ESCROW_ABI,
+          functionName: 'payOrderByPlatform',
+          args: [order.merchant, order.productId, order.orderId, proofsArr],
+          account: account || '0x0000000000000000000000000000000000000000'
+        });
+        estimatedGas = (estGas * 125n) / 100n;
+      } catch (err: any) {
+        console.error('Gas estimation failed for payOrderByPlatform (real):', err);
+        throw new Error(lang === 'zh'
+          ? `清算放款交易预估失败 (合约 Revert)：${err.shortMessage || err.message || '未知原因'}`
+          : `Transaction simulation failed (Contract Reverted): ${err.shortMessage || err.message || 'Unknown reason'}`
+        );
+      }
+
       const hash = await (walletClient as any).writeContract({
         address: ESCROW_ADDRESS,
         abi: C2C_ESCROW_ABI,
         functionName: 'payOrderByPlatform',
-        args: [order.merchant, order.productId, order.orderId, proofsArr]
+        args: [order.merchant, order.productId, order.orderId, proofsArr],
+        ...(estimatedGas ? { gas: estimatedGas } : {})
       });
 
       await publicClient.waitForTransactionReceipt({ hash });
@@ -1061,18 +1118,20 @@ export function DashboardPanel({
           top: '24px',
           left: '50%',
           transform: 'translateX(-50%)',
-          background: 'linear-gradient(135deg, rgba(24, 24, 37, 0.95) 0%, rgba(15, 15, 26, 0.98) 100%)',
+          background: toastType === 'success' 
+            ? 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)' 
+            : 'linear-gradient(135deg, #fef9c3 0%, #fef3c7 100%)', 
           backdropFilter: 'blur(20px)',
-          borderLeft: toastType === 'success' ? '4px solid #10b981' : '4px solid #f59e0b',
-          borderTop: '1px solid rgba(255, 255, 255, 0.08)',
-          borderRight: '1px solid rgba(255, 255, 255, 0.08)',
-          borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
-          color: '#ffffff',
+          borderLeft: toastType === 'success' ? '4px solid #16a34a' : '4px solid #d97706',
+          borderTop: toastType === 'success' ? '1px solid #bbf7d0' : '1px solid #fde68a',
+          borderRight: toastType === 'success' ? '1px solid #bbf7d0' : '1px solid #fde68a',
+          borderBottom: toastType === 'success' ? '1px solid #bbf7d0' : '1px solid #fde68a',
+          color: toastType === 'success' ? '#14532d' : '#78350f', 
           padding: '12px 20px',
           borderRadius: '12px',
-          boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.3), 0 10px 10px -5px rgba(0, 0, 0, 0.3)',
+          boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.15), 0 10px 10px -5px rgba(0, 0, 0, 0.1)',
           fontSize: '0.85rem',
-          fontWeight: 600,
+          fontWeight: 700, 
           zIndex: 9999,
           pointerEvents: 'none',
           animation: 'slideDownFadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1)',
@@ -1081,18 +1140,18 @@ export function DashboardPanel({
           gap: '10px',
         }}>
           {toastType === 'success' ? (
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#16a34a" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
               <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
               <polyline points="22 4 12 14.01 9 11.01" />
             </svg>
           ) : (
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#d97706" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
               <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
               <line x1="12" y1="9" x2="12" y2="13" />
               <line x1="12" y1="17" x2="12.01" y2="17" />
             </svg>
           )}
-          <span style={{ letterSpacing: '0.01em', lineHeight: '1.4' }}>{toastMessage}</span>
+          <span style={{ letterSpacing: '0.01em', lineHeight: '1.4', color: 'inherit' }}>{toastMessage}</span>
         </div>
       )}
     </div>

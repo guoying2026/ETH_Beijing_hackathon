@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { Landmark, ArrowRight, ShieldCheck, CheckCircle, RotateCw, AlertCircle, RefreshCw, X, ExternalLink } from 'lucide-react';
+import { Landmark, ArrowRight, ShieldCheck, CheckCircle, RotateCw, AlertCircle, RefreshCw, X, ExternalLink, Timer } from 'lucide-react';
 import { createPublicClient, createWalletClient, custom, http, formatUnits, parseUnits, keccak256, stringToBytes, encodePacked, parseEventLogs } from 'viem';
 import { hardhat, sepolia } from 'viem/chains';
 import { C2C_ADMIN_ABI, C2C_ESCROW_ABI, C2C_RISK_MANAGER_ABI, ERC20_ABI } from '../lib/contractAbi';
@@ -274,6 +274,20 @@ export function C2CTradeCard({ currentRate, pair, setPair, lang, amount, setAmou
   const [isFrozen, setIsFrozen] = useState<boolean>(false);
   const [contractProducts, setContractProducts] = useState<any[]>([]);
   const [selectedProduct, setSelectedProduct] = useState<any>(null);
+  const [isInitiating, setIsInitiating] = useState<boolean>(false);
+  const [currentOrderId, setCurrentOrderId] = useState<bigint | null>(null);
+  const [currentOrderDeadline, setCurrentOrderDeadline] = useState<bigint>(0n);
+  const [timeLeft, setTimeLeft] = useState<number>(900); // 15分钟倒计时
+  
+  const formatTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  const logToAgent = (msg: string) => {
+    window.dispatchEvent(new CustomEvent('agent-log', { detail: msg }));
+  };
 
 
   const checkAndSwitchNetwork = async () => {
@@ -410,6 +424,20 @@ export function C2CTradeCard({ currentRate, pair, setPair, lang, amount, setAmou
 
           const rateVal = Number(rateInfo.rate ?? rateInfo[0]) / 1e8;
 
+          let hasActive = false;
+          if (account) {
+            try {
+              hasActive = await publicClient.readContract({
+                address: ESCROW_ADDRESS,
+                abi: C2C_ESCROW_ABI,
+                functionName: 'hasActiveOrder',
+                args: [account, MERCHANT_ADDRESS, 0, pId],
+              }) as boolean;
+            } catch (e) {
+              console.warn(`Failed to fetch hasActiveOrder for product ${pId}:`, e);
+            }
+          }
+
           fetched.push({
             productId: pId,
             platformId,
@@ -417,7 +445,8 @@ export function C2CTradeCard({ currentRate, pair, setPair, lang, amount, setAmou
             rate: rateVal,
             rateVersion: rateInfo.version ?? rateInfo[1],
             availableAmount: prodInfo.availableAmount ?? prodInfo[7],
-            isOpen
+            isOpen,
+            hasActive
           });
         } catch (e) {
           console.warn(`Product ID ${pId} not listed or failed to fetch:`, e);
@@ -436,8 +465,7 @@ export function C2CTradeCard({ currentRate, pair, setPair, lang, amount, setAmou
     loadContractProducts().catch(err => {
       console.error('Failed to fetch chain products in useEffect:', err);
     });
-    // Removed 10s high-frequency interval polling to prevent RPC throttling and verbose console errors
-  }, [pair]);
+  }, [pair, account]);
 
   // Construct resolved P2P merchants list using contract data (no mock fallback)
   const resolvedP2pMerchants = contractProducts.map((p) => {
@@ -455,7 +483,8 @@ export function C2CTradeCard({ currentRate, pair, setPair, lang, amount, setAmou
       orders: 1845,
       completion: '99.8%',
       isOpen: p.isOpen,
-      platformId: p.platformId
+      platformId: p.platformId,
+      hasActive: p.hasActive
     };
   });
 
@@ -487,8 +516,204 @@ export function C2CTradeCard({ currentRate, pair, setPair, lang, amount, setAmou
     }
   }, [sendAmount, currentRate, pair]);
 
+  // 前置校验买家和商家是否绑定了对应平台的实名账户
+  const verifyBindingsBeforeTrade = async (platformName: string, platformId: `0x${string}`) => {
+    if (!account) {
+      throw new Error(lang === 'zh' ? '请先连接钱包' : 'Please connect wallet');
+    }
+    
+    await checkAndSwitchNetwork();
+
+    // 检查买家的 Platform Binding
+    const buyerBinding = await publicClient.readContract({
+      address: ADMIN_ADDRESS,
+      abi: C2C_ADMIN_ABI,
+      functionName: 'getPlatformBinding',
+      args: [account, platformId],
+    }) as any;
+
+    const isBuyerBound = buyerBinding && (typeof buyerBinding === 'object' ? buyerBinding.isSet ?? buyerBinding[2] : false);
+
+    if (!isBuyerBound) {
+      const platformNameLower = platformName.toLowerCase();
+      if (platformNameLower === 'alipay') {
+        throw new Error(lang === 'zh' ? '买家未绑定 Alipay 实名账户，交易终止！' : 'Buyer has not bound Alipay account, trade terminated!');
+      } else {
+        throw new Error(lang === 'zh' ? '买家未绑定 Wise 实名账户，交易终止！' : 'Buyer has not bound Wise account, trade terminated!');
+      }
+    }
+
+    // 检查商家的 Platform Binding
+    const merchantBinding = await publicClient.readContract({
+      address: ADMIN_ADDRESS,
+      abi: C2C_ADMIN_ABI,
+      functionName: 'getPlatformBinding',
+      args: [MERCHANT_ADDRESS, platformId],
+    }) as any;
+
+    const isMerchantBound = merchantBinding && (typeof merchantBinding === 'object' ? merchantBinding.isSet ?? merchantBinding[2] : false);
+
+    if (!isMerchantBound) {
+      const platformNameLower = platformName.toLowerCase();
+      if (platformNameLower === 'alipay') {
+        throw new Error(lang === 'zh' ? '商户未绑定 Alipay 实名账户，交易终止！' : 'Merchant has not bound Alipay account, trade terminated!');
+      } else {
+        throw new Error(lang === 'zh' ? '卖家/商户未绑定 Wise 实名账户，交易终止！' : 'Merchant has not bound Wise account, trade terminated!');
+      }
+    }
+  };
+
+  // 链上下单托管逻辑： allowance 检查 + approve (如有必要) + placeOrder 交易 + 等待确认并解析 orderId
+  const executePlaceOrderFlow = async (resolvedProduct: any) => {
+    if (!account) {
+      throw new Error(lang === 'zh' ? '请先连接钱包' : 'Please connect wallet');
+    }
+
+    const walletClient = createWalletClient({
+      account,
+      chain: targetChain,
+      transport: custom((window as any).ethereum)
+    });
+
+    const amountBig = parseUnits(sendAmount, 18);
+    const productId = resolvedProduct.productId;
+
+    // 1. 检查并授权托管合约
+    logToAgent(lang === 'zh' ? '📡 步骤 1/3: 检查并授权托管合约 (approve if needed)...' : '📡 Step 1/3: Check and approve C2CEscrow...');
+    const estimatedBond = (amountBig * BigInt(requiredBondBps)) / 10000n;
+    
+    const currentAllowance = await publicClient.readContract({
+      address: USDT_ADDRESS,
+      abi: ERC20_ABI,
+      functionName: 'allowance',
+      args: [account, ESCROW_ADDRESS],
+    }) as bigint;
+
+    if (currentAllowance < estimatedBond) {
+      logToAgent(lang === 'zh' ? '✍️ 请在钱包中确认授权托管交易...' : '✍️ Please confirm USDT approval in wallet...');
+      const MAX_UINT256 = (2n ** 256n) - 1n;
+      const approveTx = await walletClient.writeContract({
+        address: USDT_ADDRESS,
+        abi: ERC20_ABI,
+        functionName: 'approve',
+        args: [ESCROW_ADDRESS, MAX_UINT256],
+      });
+      logToAgent(lang === 'zh' ? '⌛ 等待授权交易确认...' : '⌛ Waiting for approval transaction confirmation...');
+      await publicClient.waitForTransactionReceipt({ hash: approveTx });
+      logToAgent(lang === 'zh' ? '✅ 授权成功！' : '✅ Approval successful!');
+    }
+
+    // 2. 发起链上托管下单交易 (placeOrder)
+    logToAgent(lang === 'zh' ? '📡 步骤 2/3: 发起链上托管下单交易 (placeOrder)...' : '📡 Step 2/3: Submitting placeOrder transaction...');
+    const NULL_BUYER_INFO = {
+      nameHash: '0x0000000000000000000000000000000000000000000000000000000000000000' as `0x${string}`,
+      idHash: '0x0000000000000000000000000000000000000000000000000000000000000000' as `0x${string}`,
+      isSet: false
+    };
+
+    let gas: bigint | undefined = undefined;
+    try {
+      gas = await publicClient.estimateContractGas({
+        address: ESCROW_ADDRESS,
+        abi: C2C_ESCROW_ABI,
+        functionName: 'placeOrder',
+        args: [MERCHANT_ADDRESS, productId, 0, amountBig, NULL_BUYER_INFO],
+        account
+      });
+      gas = (gas * 125n) / 100n;
+    } catch (err: any) {
+      console.error('Gas estimation failed for placeOrder:', err);
+      let customErrText = err.shortMessage || err.message || '未知原因';
+      if (customErrText.includes('0x5fe02f59') || err.message?.includes('0x5fe02f59')) {
+        customErrText = lang === 'zh' 
+          ? '商户可用额度不足 (InsufficientAvailable)，请降低下单金额。' 
+          : 'Merchant insufficient available collateral (InsufficientAvailable). Please decrease swap amount.';
+      } else if (customErrText.includes('0x0e0c8dd3') || err.message?.includes('0x0e0c8dd3')) {
+        customErrText = lang === 'zh'
+          ? '您当前对此商家的该商品已有正在进行中的活动订单 (AlreadyHasActiveOrder)，请勿重复下单，请先完成或等待前一笔订单结束。'
+          : 'You already have an active order for this merchant product (AlreadyHasActiveOrder).';
+      }
+      throw new Error(lang === 'zh' 
+        ? `下单交易预估失败 (合约 Revert)：${customErrText}`
+        : `Transaction simulation failed (Contract Reverted): ${customErrText}`
+      );
+    }
+
+    const placeTx = await walletClient.writeContract({
+      address: ESCROW_ADDRESS,
+      abi: C2C_ESCROW_ABI,
+      functionName: 'placeOrder',
+      args: [MERCHANT_ADDRESS, productId, 0, amountBig, NULL_BUYER_INFO],
+      ...(gas ? { gas } : {})
+    });
+
+    logToAgent(lang === 'zh' ? '⌛ 等待下单交易确认...' : '⌛ Waiting for order placement confirmation...');
+    const receipt = await publicClient.waitForTransactionReceipt({ hash: placeTx });
+
+    let orderId: bigint | undefined = undefined;
+    let deadlineVal = 0n;
+    const parsedLogs = parseEventLogs({
+      abi: C2C_ESCROW_ABI,
+      logs: receipt.logs,
+      eventName: 'OrderPlaced',
+    });
+    if (parsedLogs.length > 0) {
+      orderId = (parsedLogs[0].args as any).orderId;
+      deadlineVal = (parsedLogs[0].args as any).deadline ?? 0n;
+    }
+
+    if (orderId === undefined) {
+      throw new Error(lang === 'zh' ? '无法解析下单交易日志获取 OrderID' : 'Failed to parse OrderPlaced logs');
+    }
+
+    logToAgent(
+      lang === 'zh'
+        ? `✅ 下单成功！订单 ID: ${orderId.toString()}，最晚付款时间: ${new Date(Number(deadlineVal) * 1000).toLocaleString()}`
+        : `✅ Order placed! ID: ${orderId.toString()}, Deadline: ${new Date(Number(deadlineVal) * 1000).toLocaleString()}`
+    );
+
+    return { orderId, deadline: deadlineVal };
+  };
+
+  // 倒计时生命周期管理 (基于链上真实的 deadline 倒计时)
+  useEffect(() => {
+    if (step !== 'pay') return;
+    
+    let totalSeconds = 900;
+    if (currentOrderDeadline > 0n) {
+      const remaining = Number(currentOrderDeadline - BigInt(Math.floor(Date.now() / 1000)));
+      if (remaining > 0) {
+        totalSeconds = remaining;
+      }
+    }
+    setTimeLeft(totalSeconds);
+
+    const timer = setInterval(() => {
+      setTimeLeft(prev => {
+        if (prev <= 1) {
+          clearInterval(timer);
+          setErrorMsg(lang === 'zh' ? '支付超时：请在 15 分钟内完成付款并验证，该交易已过期。' : 'Payment timeout: please complete payment and verify within 15 minutes. The trade has expired.');
+          setStep('error');
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [step, lang, currentOrderDeadline]);
+
   // 开启清算流程
-  const handleInitiateTrade = () => {
+  const handleInitiateTrade = async () => {
+    if (!account) {
+      showToast(lang === 'zh' ? '请先连接钱包' : 'Please connect wallet', 'warning');
+      return;
+    }
+    if (!sendAmount || parseFloat(sendAmount) <= 0 || isNaN(parseFloat(sendAmount))) {
+      showToast(lang === 'zh' ? '请输入金额' : 'Please enter amount', 'warning');
+      return;
+    }
+
     let prod = contractProducts.find(p => p.platformName.toLowerCase() === (pair.includes('CNY') ? 'alipay' : 'wise'));
     if (!prod && contractProducts.length > 0) {
       prod = contractProducts[0];
@@ -504,6 +729,16 @@ export function C2CTradeCard({ currentRate, pair, setPair, lang, amount, setAmou
       setStep('error');
       return;
     }
+
+    const amountBig = parseUnits(sendAmount, 18);
+    if (prod.availableAmount < amountBig) {
+      const availableFormatted = formatUnits(prod.availableAmount, 18);
+      const errText = lang === 'zh'
+        ? `下单金额 (${sendAmount} USDT) 超出商家可用额度 (${parseFloat(availableFormatted).toFixed(2)} USDT)，请减少兑换金额。`
+        : `Order amount (${sendAmount} USDT) exceeds merchant's available balance (${parseFloat(availableFormatted).toFixed(2)} USDT), please lower the amount.`;
+      showToast(errText, 'warning');
+      return;
+    }
     
     const resolvedProduct = {
       platformName: prod.platformName,
@@ -512,11 +747,28 @@ export function C2CTradeCard({ currentRate, pair, setPair, lang, amount, setAmou
       rate: prod.rate
     };
 
-    setSelectedProduct(resolvedProduct);
-    setStep('pay');
-    setErrorMsg('');
-    setProveProgress(0);
-    setProveMessage(t.initMessage);
+    setIsInitiating(true);
+    try {
+      await verifyBindingsBeforeTrade(resolvedProduct.platformName, resolvedProduct.platformId);
+      
+      // 执行下单托管
+      const orderInfo = await executePlaceOrderFlow(resolvedProduct);
+      setCurrentOrderId(orderInfo.orderId);
+      setCurrentOrderDeadline(orderInfo.deadline);
+
+      setSelectedProduct(resolvedProduct);
+      setStep('pay');
+      setErrorMsg('');
+      setProveProgress(0);
+      setProveMessage(t.initMessage);
+    } catch (err: any) {
+      console.error('Initiate trade flow failed:', err);
+      showToast(err.message || 'Trade initiation failed', 'warning');
+      setErrorMsg(err.message || 'Trade initiation failed');
+      setStep('error');
+    } finally {
+      setIsInitiating(false);
+    }
   };
 
   // 监听插件进度消息
@@ -545,12 +797,8 @@ export function C2CTradeCard({ currentRate, pair, setPair, lang, amount, setAmou
     return () => window.removeEventListener('message', handleMessage);
   }, [requestId, lang]);
 
-  // 真实唤起浏览器插件生成网银付款证明
+  // 真实唤起浏览器插件生成网银付款证明并清算放款
   const handleVerifyZkTls = async () => {
-    const logToAgent = (msg: string) => {
-      window.dispatchEvent(new CustomEvent('agent-log', { detail: msg }));
-    };
-
     const saveTransactionMemory = async () => {
       try {
         await fetch('/api/save-memory', {
@@ -582,6 +830,13 @@ export function C2CTradeCard({ currentRate, pair, setPair, lang, amount, setAmou
       return;
     }
 
+    if (currentOrderId === null) {
+      logToAgent('❌ 错误：未找到有效的订单！');
+      setErrorMsg(lang === 'zh' ? '订单信息无效，请返回重新发起交易' : 'Invalid order ID.');
+      setStep('error');
+      return;
+    }
+
     await checkAndSwitchNetwork();
 
     try {
@@ -596,115 +851,20 @@ export function C2CTradeCard({ currentRate, pair, setPair, lang, amount, setAmou
       const platformName = selectedProduct ? selectedProduct.platformName : (pair.includes('CNY') ? 'Alipay' : 'Wise');
       const platformId = selectedProduct ? selectedProduct.platformId : (keccak256(stringToBytes(platformName.toLowerCase())) as `0x${string}`);
 
-      logToAgent(lang === 'zh' ? '📡 步骤 1/4: 检查并授权托管合约 (approve if needed)...' : '📡 Step 1/4: Check and approve C2CEscrow...');
-      const estimatedBond = (amountBig * BigInt(requiredBondBps)) / 10000n;
-      
-      const currentAllowance = await publicClient.readContract({
-        address: USDT_ADDRESS,
-        abi: ERC20_ABI,
-        functionName: 'allowance',
-        args: [account, ESCROW_ADDRESS],
-      }) as bigint;
-
-      if (currentAllowance < estimatedBond) {
-        logToAgent(lang === 'zh' ? '✍️ 请在钱包中确认授权托管交易...' : '✍️ Please confirm USDT approval in wallet...');
-        const MAX_UINT256 = (2n ** 256n) - 1n;
-        const approveTx = await walletClient.writeContract({
-          address: USDT_ADDRESS,
-          abi: ERC20_ABI,
-          functionName: 'approve',
-          args: [ESCROW_ADDRESS, MAX_UINT256],
-        });
-        logToAgent(lang === 'zh' ? '⌛ 等待授权交易确认...' : '⌛ Waiting for approval transaction confirmation...');
-        await publicClient.waitForTransactionReceipt({ hash: approveTx });
-        logToAgent(lang === 'zh' ? '✅ 授权成功！' : '✅ Approval successful!');
-      }
-
-      // 检查并自动设置买家的 Platform Binding
-      logToAgent(lang === 'zh' ? '📡 正在核对您的链上支付身份绑定...' : '📡 Verifying your on-chain payment binding...');
-      const buyerBinding = await publicClient.readContract({
-        address: ADMIN_ADDRESS,
-        abi: C2C_ADMIN_ABI,
-        functionName: 'getPlatformBinding',
-        args: [account, platformId],
-      }) as any;
-
-      const isBuyerBound = buyerBinding && (typeof buyerBinding === 'object' ? buyerBinding.isSet ?? buyerBinding[2] : false);
-
-      if (!isBuyerBound) {
-        logToAgent(lang === 'zh' ? '✍️ 检测到您的钱包尚未绑定网银身份，正在发起一键绑定...' : '✍️ No platform binding detected, initiating one-click binding...');
-        
-        const dummyName = platformName.toLowerCase() === 'wise' ? 'Wise Buyer' : 'Alipay Buyer';
-        const dummyHandle = '@buyer1';
-        
-        const saltHex = '0x1234567890123456789012345678901234567890123456789012345678901234' as `0x${string}`;
-        const nameHash = keccak256(encodePacked(['string', 'bytes32'], [dummyName.trim().toLowerCase().normalize('NFC'), saltHex]));
-        const idHash = keccak256(encodePacked(['string', 'bytes32'], [dummyHandle.trim().toLowerCase().normalize('NFC'), saltHex]));
-
-        const bindTx = await walletClient.writeContract({
-          address: ADMIN_ADDRESS,
-          abi: C2C_ADMIN_ABI,
-          functionName: 'setPlatformBinding',
-          args: [platformId, nameHash, idHash],
-        });
-
-        logToAgent(lang === 'zh' ? '⌛ 等待绑定交易确认...' : '⌛ Waiting for binding transaction confirmation...');
-        await publicClient.waitForTransactionReceipt({ hash: bindTx });
-        logToAgent(lang === 'zh' ? '✅ 网银身份绑定成功！' : '✅ Platform binding successful!');
-      }
-
-      logToAgent(lang === 'zh' ? '📡 步骤 2/4: 发起链上托管下单交易 (placeOrder)...' : '📡 Step 2/4: Submitting placeOrder transaction...');
-      const NULL_BUYER_INFO = {
-        nameHash: '0x0000000000000000000000000000000000000000000000000000000000000000' as `0x${string}`,
-        idHash: '0x0000000000000000000000000000000000000000000000000000000000000000' as `0x${string}`,
-        isSet: false
-      };
-
-      const placeTx = await walletClient.writeContract({
-        address: ESCROW_ADDRESS,
-        abi: C2C_ESCROW_ABI,
-        functionName: 'placeOrder',
-        args: [MERCHANT_ADDRESS, productId, 0, amountBig, NULL_BUYER_INFO]
-      });
-
-      logToAgent(lang === 'zh' ? '⌛ 等待下单交易确认...' : '⌛ Waiting for order placement confirmation...');
-      const receipt = await publicClient.waitForTransactionReceipt({ hash: placeTx });
-
-      let orderId = 0n;
-      let deadlineVal = 0n;
-      const parsedLogs = parseEventLogs({
-        abi: C2C_ESCROW_ABI,
-        logs: receipt.logs,
-        eventName: 'OrderPlaced',
-      });
-      if (parsedLogs.length > 0) {
-        orderId = (parsedLogs[0].args as any).orderId ?? 0n;
-        deadlineVal = (parsedLogs[0].args as any).deadline ?? 0n;
-      }
-
-      if (orderId === 0n) {
-        throw new Error(lang === 'zh' ? '无法解析下单交易日志获取 OrderID' : 'Failed to parse OrderPlaced logs');
-      }
-
-      logToAgent(
-        lang === 'zh'
-          ? `✅ 下单成功！订单 ID: ${orderId.toString()}，最晚付款时间: ${new Date(Number(deadlineVal) * 1000).toLocaleString()}`
-          : `✅ Order placed! ID: ${orderId.toString()}, Deadline: ${new Date(Number(deadlineVal) * 1000).toLocaleString()}`
-      );
-
       // 构建 zkTLS 绑定上下文
       logToAgent(lang === 'zh' ? '📡 正在读取合约订单快照以生成绑定哈希...' : '📡 Fetching contract order for binding hash...');
       const order = await publicClient.readContract({
         address: ESCROW_ADDRESS,
         abi: C2C_ESCROW_ABI,
         functionName: 'getOrder',
-        args: [MERCHANT_ADDRESS, productId, 0, orderId],
+        args: [MERCHANT_ADDRESS, productId, 0, currentOrderId],
       }) as any;
 
       const orderRate = order[2] as bigint;
       const orderRateVersion = order[5] as number;
       const orderDeadline = order[3] as bigint;
 
+      // 再次读取商家的 Platform Binding
       const merchantBinding = await publicClient.readContract({
         address: ADMIN_ADDRESS,
         abi: C2C_ADMIN_ABI,
@@ -712,22 +872,25 @@ export function C2CTradeCard({ currentRate, pair, setPair, lang, amount, setAmou
         args: [MERCHANT_ADDRESS, platformId],
       }) as any;
 
+      const mNameHash = merchantBinding && (typeof merchantBinding === 'object' ? merchantBinding.nameHash ?? merchantBinding[0] : undefined) as `0x${string}`;
+      const mIdHash = merchantBinding && (typeof merchantBinding === 'object' ? merchantBinding.idHash ?? merchantBinding[1] : undefined) as `0x${string}`;
+
       const ctx = {
         escrowAddress: ESCROW_ADDRESS,
         chainId: CHAIN_ID,
         merchant: MERCHANT_ADDRESS,
         buyer: account,
         productId,
-        orderId,
+        orderId: currentOrderId,
         assetType: 0,
         amount: amountBig,
         rate: orderRate,
         rateVersion: orderRateVersion,
         deadline: orderDeadline,
-        merchantNameHash: merchantBinding[0],
-        merchantIdHash: merchantBinding[1],
-        payeeNameHash: merchantBinding[0],
-        payeeIdHash: merchantBinding[1],
+        merchantNameHash: mNameHash,
+        merchantIdHash: mIdHash,
+        payeeNameHash: mNameHash,
+        payeeIdHash: mIdHash,
       };
 
       const orderBindingHash = keccak256(
@@ -764,7 +927,7 @@ export function C2CTradeCard({ currentRate, pair, setPair, lang, amount, setAmou
 
       // 加载对应的证明插件脚本
       const pluginUrl = platformName.toLowerCase() === 'alipay' ? '/plugins/alipay.js' : '/plugins/wise.js';
-      logToAgent(lang === 'zh' ? `📡 步骤 3/4: 加载 ${platformName} 证明插件并注入绑定关系...` : `📡 Step 3/4: Loading ${platformName} plugin...`);
+      logToAgent(lang === 'zh' ? `📡 步骤 2/3: 加载 ${platformName} 证明插件并注入绑定关系...` : `📡 Step 2/3: Loading ${platformName} plugin...`);
       setStep('proving');
       setProveProgress(20);
       setProveMessage(t.msgBankLoad);
@@ -875,12 +1038,31 @@ export function C2CTradeCard({ currentRate, pair, setPair, lang, amount, setAmou
         proofsArr = [buildContractProofObj(parsedResult)];
       }
 
-      logToAgent(lang === 'zh' ? '📡 步骤 4/4: 正在提交智能合约释放资金...' : '📡 Step 4/4: Submitting proofs to contract...');
+      let gas: bigint | undefined = undefined;
+      try {
+        gas = await publicClient.estimateContractGas({
+          address: ESCROW_ADDRESS,
+          abi: C2C_ESCROW_ABI,
+          functionName: 'payOrderByPlatform',
+          args: [MERCHANT_ADDRESS, productId, currentOrderId, proofsArr],
+          account
+        });
+        gas = (gas * 125n) / 100n;
+      } catch (err: any) {
+        console.error('Gas estimation failed for payOrderByPlatform:', err);
+        throw new Error(lang === 'zh'
+          ? `清算放款交易预估失败 (合约 Revert)：${err.shortMessage || err.message || '未知原因'}`
+          : `Transaction simulation failed (Contract Reverted): ${err.shortMessage || err.message || 'Unknown reason'}`
+        );
+      }
+
+      logToAgent(lang === 'zh' ? '📡 步骤 3/3: 正在提交智能合约释放资金...' : '📡 Step 3/3: Submitting proofs to contract...');
       const payTx = await walletClient.writeContract({
         address: ESCROW_ADDRESS,
         abi: C2C_ESCROW_ABI,
         functionName: 'payOrderByPlatform',
-        args: [MERCHANT_ADDRESS, productId, orderId, proofsArr]
+        args: [MERCHANT_ADDRESS, productId, currentOrderId, proofsArr],
+        ...(gas ? { gas } : {})
       });
 
       logToAgent(lang === 'zh' ? '⌛ 等待清算放款交易确认...' : '⌛ Waiting for settlement confirmation...');
@@ -1208,12 +1390,63 @@ export function C2CTradeCard({ currentRate, pair, setPair, lang, amount, setAmou
             </div>
           )}
 
+          {/* 已有活动订单警告 */}
+          {(() => {
+            let prod = contractProducts.find(p => p.platformName.toLowerCase() === (pair.includes('CNY') ? 'alipay' : 'wise'));
+            if (!prod && contractProducts.length > 0) {
+              prod = contractProducts[0];
+            }
+            if (prod && prod.hasActive) {
+              return (
+                <div style={{
+                  background: 'rgba(239, 68, 68, 0.1)',
+                  border: '1px solid rgba(239, 68, 68, 0.25)',
+                  borderRadius: '10px',
+                  padding: '10px 12px',
+                  fontSize: '0.8rem',
+                  color: '#f87171',
+                  lineHeight: '1.4',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '4px',
+                  marginBottom: '0.5rem'
+                }}>
+                  <div style={{ fontWeight: 700, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <span>⚠️ {lang === 'zh' ? '已有进行中的未清算订单' : 'Active Order Pending'}</span>
+                  </div>
+                  <div>
+                    {lang === 'zh'
+                      ? '您当前在该承兑商该通道下已有尚未清算完成的订单 (Pending / Waiting 状态)。根据合约规则，在上一笔交易完成或超时前，您无法重复下单。'
+                      : 'You already have an active pending order with this merchant. Please complete or await timeout before placing a new one.'}
+                  </div>
+                </div>
+              );
+            }
+            return null;
+          })()}
+
           <div className="escrow-banner" style={{ borderRadius: '10px', padding: '10px', fontSize: '0.8rem' }}>
             {t.escrowDesc}
           </div>
 
-          <button onClick={handleInitiateTrade} className="btn-primary" style={{ width: '100%', marginTop: '0.5rem' }}>
-            {t.btnExchange}
+          <button 
+            onClick={handleInitiateTrade} 
+            disabled={isInitiating || !!(contractProducts.find(p => p.platformName.toLowerCase() === (pair.includes('CNY') ? 'alipay' : 'wise'))?.hasActive)}
+            className="btn-primary" 
+            style={{ 
+              width: '100%', 
+              marginTop: '0.5rem', 
+              opacity: (isInitiating || !!(contractProducts.find(p => p.platformName.toLowerCase() === (pair.includes('CNY') ? 'alipay' : 'wise'))?.hasActive)) ? 0.5 : 1,
+              cursor: (isInitiating || !!(contractProducts.find(p => p.platformName.toLowerCase() === (pair.includes('CNY') ? 'alipay' : 'wise'))?.hasActive)) ? 'not-allowed' : 'pointer'
+            }}
+          >
+            {isInitiating 
+              ? (lang === 'zh' ? '正在核对身份绑定...' : 'Verifying bindings...') 
+              : (contractProducts.find(p => p.platformName.toLowerCase() === (pair.includes('CNY') ? 'alipay' : 'wise'))?.hasActive
+                ? (lang === 'zh' ? '已有活动订单在进行中' : 'Active Order In Progress')
+                : t.btnExchange
+              )
+            }
           </button>
         </div>
       )}
@@ -1239,8 +1472,21 @@ export function C2CTradeCard({ currentRate, pair, setPair, lang, amount, setAmou
                 }}
               >
                 <div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                     <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{merchant.name}</div>
+                    {merchant.hasActive && (
+                      <span style={{
+                        fontSize: '0.65rem',
+                        padding: '1px 5px',
+                        borderRadius: '4px',
+                        fontWeight: 600,
+                        background: 'rgba(239, 68, 68, 0.1)',
+                        color: '#f87171',
+                        border: '1px solid rgba(239, 68, 68, 0.2)'
+                      }}>
+                        {lang === 'zh' ? '已有进行中订单' : 'Active Order Pending'}
+                      </span>
+                    )}
                     <span style={{
                       fontSize: '0.68rem',
                       padding: '1px 5px',
@@ -1271,14 +1517,23 @@ export function C2CTradeCard({ currentRate, pair, setPair, lang, amount, setAmou
                     1 {base} = {merchant.rate.toFixed(4)} {quote}
                   </div>
                   <button
-                    disabled={!merchant.isOpen}
-                    onClick={() => {
-                      if (!merchant.isOpen) return;
+                    disabled={!merchant.isOpen || isInitiating || merchant.hasActive}
+                    onClick={async () => {
+                      if (!merchant.isOpen || merchant.hasActive) return;
                       if (!sendAmount || parseFloat(sendAmount) <= 0 || isNaN(parseFloat(sendAmount))) {
-                        showToast(lang === 'zh' ? '请输入有效的兑换金额！' : 'Please enter a valid exchange amount!', 'warning');
+                        showToast(lang === 'zh' ? '请输入金额' : 'Please enter amount', 'warning');
                         return;
                       }
                       const prod = contractProducts.find(p => p.productId === merchant.productId);
+                      const amountBig = parseUnits(sendAmount, 18);
+                      if (prod && prod.availableAmount < amountBig) {
+                        const availableFormatted = formatUnits(prod.availableAmount, 18);
+                        const errText = lang === 'zh'
+                          ? `下单金额 (${sendAmount} USDT) 超出商家可用额度 (${parseFloat(availableFormatted).toFixed(2)} USDT)，请减少兑换金额。`
+                          : `Order amount (${sendAmount} USDT) exceeds merchant\'s available balance (${parseFloat(availableFormatted).toFixed(2)} USDT), please lower the amount.`;
+                        showToast(errText, 'warning');
+                        return;
+                      }
                       const resolvedProduct = prod ? {
                         platformName: prod.platformName,
                         productId: prod.productId,
@@ -1290,26 +1545,53 @@ export function C2CTradeCard({ currentRate, pair, setPair, lang, amount, setAmou
                         platformId: merchant.platformId,
                         rate: merchant.rate
                       };
-                      setSelectedProduct(resolvedProduct);
-                      setStep('pay');
-                      setErrorMsg('');
-                      setProveProgress(0);
-                      setProveMessage(t.initMessage);
+                      
+                      setIsInitiating(true);
+                      try {
+                        await verifyBindingsBeforeTrade(resolvedProduct.platformName, resolvedProduct.platformId);
+                        
+                        // 执行下单托管
+                        const orderInfo = await executePlaceOrderFlow(resolvedProduct);
+                        setCurrentOrderId(orderInfo.orderId);
+                        setCurrentOrderDeadline(orderInfo.deadline);
+                        setSelectedProduct(resolvedProduct);
+                        setStep('pay');
+                        setErrorMsg('');
+                        setProveProgress(0);
+                        setProveMessage(t.initMessage);
+                      } catch (err: any) {
+                        console.error('Verify bindings or ordering failed:', err);
+                        showToast(err.message || 'Verification failed', 'warning');
+                        setErrorMsg(err.message || 'Order failed');
+                        setStep('error');
+                      } finally {
+                        setIsInitiating(false);
+                      }
                     }}
                     style={{
-                      background: merchant.isOpen ? 'var(--primary)' : 'rgba(255,255,255,0.06)',
+                      background: (merchant.isOpen && !merchant.hasActive) ? 'var(--primary)' : 'rgba(255,255,255,0.06)',
                       border: 'none',
-                      color: merchant.isOpen ? 'white' : 'var(--text-muted)',
+                      color: (merchant.isOpen && !merchant.hasActive) ? 'white' : 'var(--text-muted)',
                       padding: '5px 12px',
                       borderRadius: '8px',
                       fontSize: '0.8rem',
                       fontWeight: 600,
-                      cursor: merchant.isOpen ? 'pointer' : 'not-allowed',
+                      cursor: (merchant.isOpen && !merchant.hasActive) ? 'pointer' : 'not-allowed',
                       marginTop: '4px',
-                      transition: 'all 0.2s'
+                      transition: 'all 0.2s',
+                      opacity: isInitiating ? 0.7 : 1
                     }}
                   >
-                    {merchant.isOpen ? (lang === 'zh' ? '交易' : 'Trade') : (lang === 'zh' ? '商家不在线' : 'Offline')}
+                    {isInitiating 
+                      ? (lang === 'zh' ? '检测中...' : 'Verifying...') 
+                      : (merchant.hasActive
+                        ? (lang === 'zh' ? '已有进行中订单' : 'Active Order Pending')
+                        : (merchant.isOpen 
+                          ? (lang === 'zh' ? '交易' : 'Trade') 
+                          : (lang === 'zh' ? '商家不在线' : 'Offline')
+                        )
+                      )
+                    }
                   </button>
                 </div>
               </div>
@@ -1325,9 +1607,66 @@ export function C2CTradeCard({ currentRate, pair, setPair, lang, amount, setAmou
             <Landmark size={20} />
             <h3 style={{ margin: 0 }}>{t.escrowTitle}</h3>
           </div>
+
+          {/* 倒计时警示卡片 */}
+          <div style={{
+            background: timeLeft < 180 ? 'rgba(239, 68, 68, 0.08)' : 'rgba(245, 158, 11, 0.08)',
+            border: timeLeft < 180 ? '1px solid rgba(239, 68, 68, 0.2)' : '1px solid rgba(245, 158, 11, 0.2)',
+            borderRadius: '12px',
+            padding: '12px 16px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '12px',
+            boxShadow: '0 4px 12px rgba(0, 0, 0, 0.1)',
+            animation: timeLeft < 180 ? 'pulse-danger 2s infinite' : 'none'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <Timer size={18} color={timeLeft < 180 ? '#ef4444' : '#f59e0b'} style={{ animation: timeLeft < 180 ? 'spin 4s linear infinite' : 'none' }} />
+              <span style={{ 
+                fontSize: '0.85rem', 
+                color: timeLeft < 180 ? '#f87171' : 'var(--text-primary)',
+                fontWeight: 600
+              }}>
+                {lang === 'zh' ? '请在倒计时结束前完成付款与验证' : 'Please complete payment & verify before timeout'}
+              </span>
+            </div>
+            <span style={{
+              fontFamily: 'monospace',
+              fontSize: '1.25rem',
+              fontWeight: 800,
+              color: '#ffffff',
+              background: timeLeft < 180 ? '#dc2626' : '#d97706',
+              padding: '4px 10px',
+              borderRadius: '8px',
+              letterSpacing: '0.5px',
+              boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+            }}>
+              {formatTime(timeLeft)}
+            </span>
+          </div>
           
           <div style={{ background: 'rgba(245,158,11,0.03)', border: '1px solid rgba(245,158,11,0.1)', padding: '12px', borderRadius: '10px', fontSize: '0.85rem' }}>
             <div style={{ color: 'var(--text-primary)', fontWeight: 600, marginBottom: '6px' }}>{t.step1Title}</div>
+            
+            {/* 承兑商好友添加安全警示 */}
+            <div style={{ 
+              color: '#b91c1c', 
+              fontWeight: 700, 
+              background: '#fef2f2', 
+              border: '1px solid #fee2e2',
+              padding: '8px 12px', 
+              borderRadius: '8px', 
+              marginBottom: '12px', 
+              fontSize: '0.8rem',
+              borderLeft: '4px solid #ef4444',
+              lineHeight: '1.4'
+            }}>
+              ⚠️ {lang === 'zh' 
+                ? '重要提示：转账付款前，请务必先添加承兑商好友，否则可能导致转账失败！' 
+                : 'Important: Please make sure to add the merchant as a friend before making the transfer, otherwise the transaction may fail!'}
+            </div>
+
             <div style={{ color: 'var(--text-muted)', display: 'flex', flexDirection: 'column', gap: '4px' }}>
               <div>{t.bankLabel} **{selectedProduct?.platformName || (pair.includes('CNY') ? 'Alipay' : 'Wise')}**</div>
               <div>{t.nameLabel} **{selectedProduct?.platformName?.toLowerCase() === 'alipay' ? 'KELLY LIM HOOI YEN' : 'KAI XU LOOI'}**</div>
@@ -1427,7 +1766,11 @@ export function C2CTradeCard({ currentRate, pair, setPair, lang, amount, setAmou
               {t.retryBtn}
             </button>
             <button
-              onClick={() => setStep('pay')}
+              onClick={() => {
+                setStep('input');
+                setErrorMsg('');
+                loadContractProducts().catch(console.error);
+              }}
               style={{
                 width: '100%',
                 background: 'rgba(255,255,255,0.05)',
@@ -1454,6 +1797,11 @@ export function C2CTradeCard({ currentRate, pair, setPair, lang, amount, setAmou
         @keyframes fadeIn {
           from { opacity: 0; transform: scale(0.97); }
           to { opacity: 1; transform: scale(1); }
+        }
+        @keyframes pulse-danger {
+          0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
+          70% { box-shadow: 0 0 0 10px rgba(239, 68, 68, 0); }
+          100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
         }
       `}</style>
 
@@ -1756,18 +2104,20 @@ export function C2CTradeCard({ currentRate, pair, setPair, lang, amount, setAmou
           top: '24px',
           left: '50%',
           transform: 'translateX(-50%)',
-          background: 'linear-gradient(135deg, rgba(24, 24, 37, 0.95) 0%, rgba(15, 15, 26, 0.98) 100%)',
+          background: toastType === 'success' 
+            ? 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)' 
+            : 'linear-gradient(135deg, #fef9c3 0%, #fef3c7 100%)', 
           backdropFilter: 'blur(20px)',
-          borderLeft: toastType === 'success' ? '4px solid #10b981' : '4px solid #f59e0b',
-          borderTop: '1px solid rgba(255, 255, 255, 0.08)',
-          borderRight: '1px solid rgba(255, 255, 255, 0.08)',
-          borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
-          color: '#ffffff',
+          borderLeft: toastType === 'success' ? '4px solid #16a34a' : '4px solid #d97706',
+          borderTop: toastType === 'success' ? '1px solid #bbf7d0' : '1px solid #fde68a',
+          borderRight: toastType === 'success' ? '1px solid #bbf7d0' : '1px solid #fde68a',
+          borderBottom: toastType === 'success' ? '1px solid #bbf7d0' : '1px solid #fde68a',
+          color: toastType === 'success' ? '#14532d' : '#78350f', 
           padding: '12px 20px',
           borderRadius: '12px',
-          boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.3), 0 10px 10px -5px rgba(0, 0, 0, 0.3)',
+          boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.15), 0 10px 10px -5px rgba(0, 0, 0, 0.1)',
           fontSize: '0.85rem',
-          fontWeight: 600,
+          fontWeight: 700, 
           zIndex: 9999,
           pointerEvents: 'none',
           animation: 'slideDownFadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1)',
@@ -1776,18 +2126,18 @@ export function C2CTradeCard({ currentRate, pair, setPair, lang, amount, setAmou
           gap: '10px',
         }}>
           {toastType === 'success' ? (
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#16a34a" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
               <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
               <polyline points="22 4 12 14.01 9 11.01" />
             </svg>
           ) : (
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#d97706" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
               <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
               <line x1="12" y1="9" x2="12" y2="13" />
               <line x1="12" y1="17" x2="12.01" y2="17" />
             </svg>
           )}
-          <span style={{ letterSpacing: '0.01em', lineHeight: '1.4' }}>{toastMessage}</span>
+          <span style={{ letterSpacing: '0.01em', lineHeight: '1.4', color: 'inherit' }}>{toastMessage}</span>
         </div>
       )}
     </div>

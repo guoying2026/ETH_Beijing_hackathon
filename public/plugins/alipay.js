@@ -13,16 +13,7 @@ const PATH = "/enterprise/fundReportDetailQuery.json";
 const LANDING_URL = "https://b.alipay.com/page/mbillexprod/fund/business/operate/detail";
 const METHOD = "POST";
 const TLSN_POLICY_VERSION = "v1.0.0";
-function getJsonBody(request) {
-  if (!request.requestBody?.raw?.[0]?.bytes) return null;
-  const bytes = request.requestBody.raw[0].bytes;
-  const text = String.fromCharCode(...bytes);
-  try {
-    return JSON.parse(text);
-  } catch {
-    return text;
-  }
-}
+
 function getFormBody(request) {
   if (!request.requestBody?.formData) return null;
   return request.requestBody.formData;
